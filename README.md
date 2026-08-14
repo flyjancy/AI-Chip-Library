@@ -1,6 +1,6 @@
 # Technical Library
 
-这是一个以 AI Chip 为核心、持续收录其他技术主题资料的个人阅读资料库，内容包括论文、博客和技术文档。
+这是一个以 AI Chip 为核心、持续收录其他技术主题资料的资料库，内容包括论文、博客和技术文档。
 
 ## 目录结构
 
@@ -8,12 +8,12 @@
 
 ```text
 .
-|-- AI-Aided-Design/
-|   `-- RTL-Optimization/
-|-- Algorithm/
-|   `-- Quantization/
-`-- Architecture/
-    `-- NPU/
+├── AI-Aided-Design/
+│   └── RTL-Optimization/
+├── Algorithm/
+│   └── Quantization/
+└── Architecture/
+    └── NPU/
 ```
 
 - `Architecture`：按硬件模块分类，例如 `GPU`、`NPU`、`NoC`、`DMA`。
