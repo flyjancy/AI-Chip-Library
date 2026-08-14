@@ -1,4 +1,4 @@
-# Technical Library Agent Guide
+# AI Chip Library Agent Guide
 
 ## 项目目标
 
@@ -59,7 +59,7 @@
 
 ## Git 与发布
 
-- GitHub 仓库为 private `flyjancy/Library`，默认分支为 `main`，远端名为 `origin`。
+- GitHub 仓库为 private `flyjancy/AI-Chip-Library`，默认分支为 `main`，远端名为 `origin`。
 - 当前 PDF 体量较小，直接由 Git 管理；只有仓库大小实际造成克隆或推送问题时再考虑 Git LFS。
 - 已确认的资料整理或文档修复完成并通过检查后，创建内容明确的普通提交并推送 `main`。
 - 禁止 force push、覆盖已有 Summary、重写历史或删除原始资料，除非维护者明确要求。

@@ -1,4 +1,4 @@
-# Technical Library
+# AI Chip Library
 
 这是一个以 AI Chip 为核心、持续收录其他技术主题资料的资料库，内容包括论文、博客和技术文档。
 
