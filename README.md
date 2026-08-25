@@ -25,6 +25,7 @@
 
 | 标题 | 年份 | 分类 | Summary | 相关主题 |
 | --- | ---: | --- | --- | --- |
+| Patterns behind Chaos: Forecasting Data Movement for Efficient Large-Scale MoE LLM Inference | 2026 | Architecture / NPU | [深度分析](Architecture/NPU/summary-Patterns-behind-Chaos-Forecasting-Data-Movement-for-Efficient-Large-Scale-MoE-LLM-Inference.md) | MoE、LLM Inference、GPU、Chiplet、Wafer-scale、Data Movement |
 | Ares: Adaptive Reasoning-Effort Steering for PPA- and Cost-Aware RTL Optimization with LLM Agents | 2026 | AI-Aided-Design / RTL-Optimization | [深度分析](AI-Aided-Design/RTL-Optimization/summary-Ares-Adaptive-Reasoning-Effort-Steering-for-PPA-and-Cost-Aware-RTL-Optimization-with-LLM-Agents.md) | LLM Agent、EDA、PPA、RTL |
 | An Efficient Layer Normalization Training Module With Dynamic Quantization for Transformers | 2025 | Architecture / NPU | [深度分析](Architecture/NPU/summary-An-Efficient-Layer-Normalization-Training-Module-With-Dynamic-Quantization-for-Transformers.md) | Transformer Training、Dynamic Quantization、FPGA、ASIC |
 | SigmaQuant: Hardware-Aware Heterogeneous Quantization Method for Edge DNN Inference | 2026 | Algorithm / Quantization | [深度分析](Algorithm/Quantization/summary-SigmaQuant-Hardware-Aware-Heterogeneous-Quantization-Method-for-Edge-DNN-Inference.md) | Edge Inference、Mixed Precision、Accelerator |
