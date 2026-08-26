@@ -14,6 +14,7 @@
 │   └── Quantization/
 └── Architecture/
     ├── GPU/
+    ├── Memory/
     └── NPU/
 ```
 
@@ -39,6 +40,21 @@
 | Insights into DeepSeek-V3: Scaling Challenges and Reflections on Hardware for AI Architectures | 2025 | Architecture / NPU | [深度分析](Architecture/NPU/summary-Insights-into-DeepSeek-V3-Scaling-Challenges-and-Reflections-on-Hardware-for-AI-Architectures.md) | DeepSeek、MoE、FP8、Multi-Plane Network、Co-design |
 | Think Fast: A Tensor Streaming Processor (TSP) for Accelerating Deep Learning Workloads | 2020 | Architecture / NPU | [深度分析](Architecture/NPU/summary-Think-Fast-A-Tensor-Streaming-Processor-TSP-for-Accelerating-Deep-Learning-Workloads.md) | Groq、TSP、Dataflow、Batch-1 Inference |
 | Ten Lessons From Three Generations Shaped Google’s TPUv4i Industrial Product | 2021 | Architecture / NPU | [深度分析](Architecture/NPU/summary-Ten-Lessons-From-Three-Generations-Shaped-Google-s-TPUv4i-Industrial-Product.md) | TPU、DSA、CMEM、Compiler、Perf/TCO |
+| Memory: Feeding AI’s Voracious Hunger for Data | 2026 | Architecture / Memory | [深度分析](Architecture/Memory/summary-Memory-Feeding-AI-s-Voracious-Hunger-for-Data.md) | AI Memory、HBM、PIM、Memory Wall |
+| Evolving Memory Architectures for AI | 2026 | Architecture / Memory | [深度分析](Architecture/Memory/summary-Evolving-Memory-Architectures-for-AI.md) | HBM、DDR5、封装、RAS、热设计 |
+| HBF in AI Compute: A System Architect’s View | 2026 | Architecture / Memory | [深度分析](Architecture/Memory/summary-HBF-in-AI-Compute-A-System-Architect-s-View.md) | HBF、Flash、MoE、KV Cache、Memory Tiering |
+| Raptor: The First 3D-DRAM Accelerator for Generative Inference | 2026 | Architecture / Memory | [深度分析](Architecture/Memory/summary-Raptor-The-First-3D-DRAM-Accelerator-for-Generative-Inference.md) | 3D DRAM、HBM、ECC、DBI、Memory Bandwidth |
+| AMD Instinct MI400 Series GPU Architecture | 2026 | Architecture / GPU | [深度分析](Architecture/GPU/summary-AMD-Instinct-MI400-Series-GPU-Architecture.md) | AMD、MI400、CDNA、HBM4、Rack-scale |
+| System Architecture of the AMD MI400 Series GPU | 2026 | Architecture / GPU | [深度分析](Architecture/GPU/summary-System-Architecture-of-the-AMD-MI400-Series-GPU.md) | AMD、MI400、AI-NIC、Infinity Fabric、Co-design |
+| Crescent Island: GPU Designed for Agentic AI Inference | 2026 | Architecture / GPU | [深度分析](Architecture/GPU/summary-Crescent-Island-GPU-Designed-for-Agentic-AI-Inference.md) | Intel、GPU、Agentic AI、Inference、Memory |
+| NVIDIA Rubin GPU: Driving the Era of Agentic AI | 2026 | Architecture / GPU | [深度分析](Architecture/GPU/summary-NVIDIA-Rubin-GPU-Driving-the-Era-of-Agentic-AI.md) | NVIDIA、Rubin、Agentic AI、NVL72、Co-design |
+| Rack-Scale Architecture for Wafer Scale Engine | 2026 | Architecture / NPU | [深度分析](Architecture/NPU/summary-Rack-Scale-Architecture-for-Wafer-Scale-Engine.md) | Cerebras、WSE、Wafer-scale、Rack-scale、Networking |
+| Meta’s Custom AI Silicon: From Recommendation to Dual-Mandate with GenAI | 2026 | Architecture / NPU | [深度分析](Architecture/NPU/summary-Meta-s-Custom-AI-Silicon-From-Recommendation-to-Dual-Mandate-with-GenAI.md) | Meta、MTIA、Recommendation、GenAI、HBM |
+| Maia 200: A Data Center Scale AI Accelerator for Large Scale Inference using Software Defined Dataflow | 2026 | Architecture / NPU | [深度分析](Architecture/NPU/summary-Maia-200-A-Data-Center-Scale-AI-Accelerator-for-Large-Scale-Inference-using-Software-Defined-Dataflow.md) | Microsoft、Maia 200、Dataflow、Inference、HBM |
+| The Eighth Generation TPU Family: Two Chips Optimized for the Agentic Era | 2026 | Architecture / NPU | [深度分析](Architecture/NPU/summary-The-Eighth-Generation-TPU-Family-Two-Chips-Optimized-for-the-Agentic-Era.md) | Google、TPU8t、TPU8i、Agentic AI、Pod |
+| Dataflow at Scale: the SN50 RDU | 2026 | Architecture / NPU | [深度分析](Architecture/NPU/summary-Dataflow-at-Scale-the-SN50-RDU.md) | SambaNova、RDU、Dataflow、MBU、MoE |
+| Think Fast: LPU Accelerator for Heterogeneous Compute | 2026 | Architecture / NPU | [深度分析](Architecture/NPU/summary-Think-Fast-LPU-Accelerator-for-Heterogeneous-Compute.md) | NVIDIA、Groq、LPU、VLIW、Heterogeneous Inference |
+| Jalapeño ASIC + System | 2026 | Architecture / NPU | [深度分析](Architecture/NPU/summary-Jalapeno-ASIC-System.md) | OpenAI、ASIC、HBM4、Spatial Architecture、PPA |
 
 ## 收录规则
 
