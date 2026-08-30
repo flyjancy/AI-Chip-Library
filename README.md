@@ -12,20 +12,24 @@
 │   └── RTL-Optimization/
 ├── Algorithm/
 │   └── Quantization/
-└── Architecture/
-    ├── GPU/
-    ├── Memory/
-    └── NPU/
+├── Architecture/
+│   ├── GPU/
+│   ├── Memory/
+│   └── NPU/
+└── Software-Engineering/
+    └── Project-Management/
 ```
 
 - `Architecture`：按硬件模块分类，例如 `GPU`、`NPU`、`NoC`、`DMA`。
 - `Algorithm`：按算法技术分类，例如 `Quantization`、`Sparsity`、`Training`。
 - `AI-Aided-Design`：按设计任务分类，例如 `RTL-Generation`、`RTL-Optimization`、`Verification`、`Physical-Design`。
+- `Software-Engineering`：按软件工程主题分类，例如 `Project-Management`、`Architecture`、`Testing`。
 
 ## 资料索引
 
 | 标题 | 年份 | 分类 | Summary | 相关主题 |
 | --- | ---: | --- | --- | --- |
+| The Mythical Man-Month: Essays on Software Engineering | 1995 | Software-Engineering / Project-Management | [全书总结](Software-Engineering/Project-Management/summary-The-Mythical-Man-Month-Essays-on-Software-Engineering.md) | Software Project Management、Brooks's Law、Conceptual Integrity、No Silver Bullet |
 | Memory: Feeding AI’s Voracious Hunger for Data | 2026 | Architecture / Memory | [深度分析](Architecture/Memory/summary-Memory-Feeding-AI-s-Voracious-Hunger-for-Data.md) | AI Memory、HBM、PIM、Memory Wall |
 | Evolving Memory Architectures for AI | 2026 | Architecture / Memory | [深度分析](Architecture/Memory/summary-Evolving-Memory-Architectures-for-AI.md) | HBM、DDR5、封装、RAS、热设计 |
 | HBF in AI Compute: A System Architect’s View | 2026 | Architecture / Memory | [深度分析](Architecture/Memory/summary-HBF-in-AI-Compute-A-System-Architect-s-View.md) | HBF、Flash、MoE、KV Cache、Memory Tiering |
