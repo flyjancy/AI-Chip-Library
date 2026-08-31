@@ -37,6 +37,7 @@ AI Chip Library 持续归档 AI 芯片及相关技术资料，并为每份资料
 ├── AI-Aided-Design/
 │   └── RTL-Optimization/
 ├── Algorithm/
+│   ├── Deep-Learning/
 │   └── Quantization/
 ├── Architecture/
 │   ├── GPU/
@@ -79,6 +80,7 @@ AI Chip Library 持续归档 AI 芯片及相关技术资料，并为每份资料
 | Hardware-Centric Analysis of DeepSeek’s Multi-Head Latent Attention | 2025 | Architecture / NPU | [深度分析](Architecture/NPU/summary-Hardware-Centric-Analysis-of-DeepSeek-s-Multi-Head-Latent-Attention.md) | MLA、KV Cache、Dataflow Accelerator、Roofline |
 | Insights into DeepSeek-V3: Scaling Challenges and Reflections on Hardware for AI Architectures | 2025 | Architecture / NPU | [深度分析](Architecture/NPU/summary-Insights-into-DeepSeek-V3-Scaling-Challenges-and-Reflections-on-Hardware-for-AI-Architectures.md) | DeepSeek、MoE、FP8、Multi-Plane Network、Co-design |
 | An Efficient Layer Normalization Training Module With Dynamic Quantization for Transformers | 2025 | Architecture / NPU | [深度分析](Architecture/NPU/summary-An-Efficient-Layer-Normalization-Training-Module-With-Dynamic-Quantization-for-Transformers.md) | Transformer Training、Dynamic Quantization、FPGA、ASIC |
+| Understanding Deep Learning | 2023 | Algorithm / Deep-Learning | [全书总结](Algorithm/Deep-Learning/summary-Understanding-Deep-Learning.md) | Neural Networks、Optimization、CNN、Transformer、Generative Models、Reinforcement Learning |
 | A Research Retrospective on the AMD Exascale Computing Journey | 2023 | Architecture / GPU | [深度分析](Architecture/GPU/summary-A-Research-Retrospective-on-the-AMD-Exascale-Computing-Journey.md) | AMD、Frontier、CDNA、Chiplet、HBM、Co-design |
 | TPU v4: An Optically Reconfigurable Supercomputer for Machine Learning with Hardware Support for Embeddings | 2023 | Architecture / NPU | [深度分析](Architecture/NPU/summary-TPU-v4-An-Optically-Reconfigurable-Supercomputer-for-Machine-Learning-with-Hardware-Support-for-Embeddings.md) | TPU、OCS、SparseCore、Embedding、3D Torus |
 | A Software-defined Tensor Streaming Multiprocessor for Large-scale Machine Learning | 2022 | Architecture / NPU | [深度分析](Architecture/NPU/summary-A-Software-defined-Tensor-Streaming-Multiprocessor-for-Large-scale-Machine-Learning.md) | Groq、TSP、Dragonfly、Deterministic Network |
