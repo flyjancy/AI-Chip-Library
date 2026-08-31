@@ -1,8 +1,34 @@
+<div align="center">
+
 # AI Chip Library
 
-这是一个以 AI Chip 为核心、持续收录其他技术主题资料的资料库，内容包括论文、博客和技术文档。
+**面向 AI 芯片架构、算法与 AI 辅助设计的个人技术资料库**<br>
+**A personal technical library for AI chip architecture, algorithms, and AI-aided design**
 
-## 目录结构
+<p>
+  <a href="#中文">中文</a> · <a href="#english">English</a>
+</p>
+
+</div>
+
+---
+
+<a id="中文"></a>
+
+## 中文
+
+AI Chip Library 持续归档 AI 芯片及相关技术资料，并为每份资料整理中文深度分析。内容覆盖芯片架构、硬件感知算法、AI 辅助芯片设计，以及与技术研发相关的软件工程主题。
+
+### 核心内容
+
+| 内容 | 说明 |
+| --- | --- |
+| 原始资料 | 保存论文、技术报告、博客和技术文档，便于离线查阅与长期归档 |
+| 中文深度分析 | 提炼问题、方法、实验、局限与工程启示，并明确区分论文证据和工程推断 |
+| 统一索引 | 按年份、主分类和相关主题组织资料，集中维护本地 Summary 链接 |
+| 工程视角 | 关注算法瓶颈、结构或训练方法，以及对芯片架构、RTL 和验证的影响 |
+
+### 目录结构
 
 资料按两级主题组织：一级目录表示技术领域，二级目录表示该领域内的模块、技术或设计任务。二级目录只在有实际资料时创建。
 
@@ -25,7 +51,7 @@
 - `AI-Aided-Design`：按设计任务分类，例如 `RTL-Generation`、`RTL-Optimization`、`Verification`、`Physical-Design`。
 - `Software-Engineering`：按软件工程主题分类，例如 `Project-Management`、`Architecture`、`Testing`。
 
-## 资料索引
+### 资料索引
 
 | 标题 | 年份 | 分类 | Summary | 相关主题 |
 | --- | ---: | --- | --- | --- |
@@ -60,9 +86,28 @@
 | Think Fast: A Tensor Streaming Processor (TSP) for Accelerating Deep Learning Workloads | 2020 | Architecture / NPU | [深度分析](Architecture/NPU/summary-Think-Fast-A-Tensor-Streaming-Processor-TSP-for-Accelerating-Deep-Learning-Workloads.md) | Groq、TSP、Dataflow、Batch-1 Inference |
 | The Mythical Man-Month: Essays on Software Engineering | 1995 | Software-Engineering / Project-Management | [全书总结](Software-Engineering/Project-Management/summary-The-Mythical-Man-Month-Essays-on-Software-Engineering.md) | Software Project Management、Brooks's Law、Conceptual Integrity、No Silver Bullet |
 
-## 收录规则
+### 收录规则
 
 1. 每份资料只保存一份，并归入一个主目录；跨领域信息记录在索引的“相关主题”中。
 2. 文件名使用正式完整标题，以连字符分隔并保留原始大小写和数字；完整标题写入索引。
 3. 新资料先检查标题、来源、重复情况和候选分类。分类明确时提出归档建议；跨一级领域时列出候选位置及理由，由资料库维护者决定。
 4. 分类确认后再移动或重命名文件，并在同一次整理中更新本索引。
+
+---
+
+<a id="english"></a>
+
+## English
+
+AI Chip Library is a personal archive of source materials and Chinese technical reviews focused on AI chips. It covers chip architecture, hardware-aware algorithms, AI-aided chip design, and selected software engineering topics relevant to technical development.
+
+### What It Contains
+
+| Content | Purpose |
+| --- | --- |
+| Source materials | Papers, technical reports, blog posts, and technical documents preserved for offline reference |
+| Chinese reviews | Structured analysis of the problem, method, experiments, limitations, and engineering implications |
+| Topic-based archive | One primary location per item, organized by technical domain and subject |
+| Engineering perspective | Connections from algorithmic bottlenecks and methods to chip architecture, RTL, and verification |
+
+The Chinese section above is the canonical index for all archived materials and reviews.
