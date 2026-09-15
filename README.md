@@ -58,10 +58,10 @@ AI Chip Library 持续归档 AI 芯片及相关技术资料，并为每份资料
 | 标题 | 年份 | 分类 | Summary | 相关主题 |
 | --- | ---: | --- | --- | --- |
 | ACE-RTL: When Agentic Context Evolution Meets RTL-Specialized LLMs | 2026 | AI-Aided-Design / RTL-Generation | [深度分析](AI-Aided-Design/RTL-Generation/ACE-RTL-When-Agentic-Context-Evolution-Meets-RTL-Specialized-LLMs-summary.md) | RTL Generation、LLM Agent、Simulation Feedback、Context Evolution |
-| Memory: Feeding AI’s Voracious Hunger for Data | 2026 | Architecture / Memory | [深度分析](Architecture/Memory/Memory-Feeding-AI-s-Voracious-Hunger-for-Data-summary.md) | AI Memory、HBM、PIM、Memory Wall |
-| Evolving Memory Architectures for AI | 2026 | Architecture / Memory | [深度分析](Architecture/Memory/Evolving-Memory-Architectures-for-AI-summary.md) | HBM、DDR5、封装、RAS、热设计 |
-| HBF in AI Compute: A System Architect’s View | 2026 | Architecture / Memory | [深度分析](Architecture/Memory/HBF-in-AI-Compute-A-System-Architect-s-View-summary.md) | HBF、Flash、MoE、KV Cache、Memory Tiering |
-| Raptor: The First 3D-DRAM Accelerator for Generative Inference | 2026 | Architecture / Memory | [深度分析](Architecture/Memory/Raptor-The-First-3D-DRAM-Accelerator-for-Generative-Inference-summary.md) | 3D DRAM、HBM、ECC、DBI、Memory Bandwidth |
+| Memory: Feeding AI’s Voracious Hunger for Data | 2026 | Architecture / Memory | [深度分析](Architecture/Memory/Memory-Feeding-AI-s-Voracious-Hunger-for-Data-summary.md) | AI Memory、HBM、PIM、Memory Wall、DRAM Pricing |
+| Evolving Memory Architectures for AI | 2026 | Architecture / Memory | [深度分析](Architecture/Memory/Evolving-Memory-Architectures-for-AI-summary.md) | HBM、HBM4、DDR5、封装、RAS、热设计 |
+| HBF in AI Compute: A System Architect’s View | 2026 | Architecture / Memory | [深度分析](Architecture/Memory/HBF-in-AI-Compute-A-System-Architect-s-View-summary.md) | HBF、Flash、MoE、KV Cache、Memory Tiering、Endurance |
+| Raptor: The First 3D-DRAM Accelerator for Generative Inference | 2026 | Architecture / Memory | [深度分析](Architecture/Memory/Raptor-The-First-3D-DRAM-Accelerator-for-Generative-Inference-summary.md) | 3D DRAM、HBM、ECC、DBI、Bank Mapping、Thermal |
 | AMD Instinct MI400 Series GPU Architecture | 2026 | Architecture / GPU | [深度分析](Architecture/GPU/AMD-Instinct-MI400-Series-GPU-Architecture-summary.md) | AMD、MI400、MI455X、CDNA、HBM4、MXFP4、CoWoS-L |
 | System Architecture of the AMD MI400 Series GPU | 2026 | Architecture / GPU | [深度分析](Architecture/GPU/System-Architecture-of-the-AMD-MI400-Series-GPU-summary.md) | AMD、MI400、UALoE、AI-NIC、Infinity Fabric、VPod |
 | Crescent Island: GPU Designed for Agentic AI Inference | 2026 | Architecture / GPU | [深度分析](Architecture/GPU/Crescent-Island-GPU-Designed-for-Agentic-AI-Inference-summary.md) | Intel、GPU、Agentic AI、LPDDR5x、Speculative Decoding |
