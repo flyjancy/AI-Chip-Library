@@ -3,103 +3,105 @@
 ## 基本信息
 
 - **标题**：System Architecture of the AMD MI400 Series GPU
-- **文档类型**：系统架构演讲（Hot Chips 2026）
-- **作者**：Steve Scott、David Riddoch、Krishna Doddapaneni
-- **机构**：AMD，Network & System Architecture / Networking
-- **发表 venue**：Hot Chips 2026
+- **文档类型**：技术演示文稿（Hot Chips 2026 厂商报告，共 30 页，标注 AMD General）
+- **作者**：Steve Scott（Corporate Fellow, Network & System Architecture）、David Riddoch（Senior Fellow, Networking）、Krishna Doddapaneni（Corporate Vice President, Networking）
+- **机构**：AMD
+- **发表 venue**：Hot Chips 2026（August 2026）
 - **年份**：2026
-- **链接**：AMD Helios/Instinct MI400 系列资料（演讲未提供独立论文链接）
+- **链接**：不适用（厂商演示文稿，随 Hot Chips 发布）
 
 ## 一句话总结
 
-> AMD Helios 以 72 个 MI455X、Venice EPYC、Vulcano 800 AI NIC 和 UALoE 多平面 fabric 构成 rack-scale 共享内存系统，并用可编程传输、拥塞控制、遥测、故障重平衡和安全机制支撑训练/推理扩展。
+> AMD 把 scale-up 互连做成跑在标准以太网上的 UALoE（Infinity Fabric over Ethernet），用交换式多平面网络把 72 颗 MI455X 拼成一个共享内存域：每颗 GPU 集成 18 个 800 Gbps 的 UALoE 适配器，对外提供 1.8 TB/s/dir，可对超过 30 TB 的 HBM4 做跨节点 load/store。
 
 ## 研究动机与问题定义
 
-- **要解决的核心问题**：AI rack 需要在数十 GPU 间提供高带宽 scale-up、可扩展 scale-out、低延迟共享内存、故障恢复和统一运维，同时受电气链路、拥塞、功耗和安全约束。
-- **现有方法的不足**：主机栈参与通信会增加延迟和控制依赖；静态拓扑、固定协议和单一 NIC 难以同时满足多种 collective、存储和可靠性需求。
-- **本文的切入角度**：展示 Helios 计算 tray、switch tray、UALoE shared-memory transport、Vulcano AI NIC、Fabric Manager 和机架级 RAS 的完整系统设计。
+与同期的《AMD Instinct MI400 Series GPU Architecture》讲单芯片内部结构不同，这份文稿讲的是**系统与网络侧**：为什么要把机柜级互连做成以太网之上的共享内存 fabric，以及为此在协议、可靠性和安全上做了什么。作者全部来自 Network & System Architecture 与 Networking 部门，这个作者构成本身就说明了视角。
 
-## 核心方法
+第 2–3 页给出定位：AMD 自称做全栈系统方案，Helios 由三大部件共同设计——6th Gen EPYC「Venice」CPU（96 个高频核、Gen6 PCIe CPU–GPU、1.6 TB/s 内存带宽）、Instinct MI455 GPU（40 PF FP4、432 GB HBM4、23.3 TB/s）、Pensando「Vulcano」AI NIC（800 Gbps、每秒 2 亿包、协议完全可编程）。第 4 页给出设计取舍的两句关键话：采用**交换式拓扑**以获得最大通信灵活性；scale 距离受电信号限制，**正在接近光互连的切换点**。
 
-### 方法概述
+## 核心结构（系统规格与机制）
 
-Helios 每 rack 由 18 个 compute tray、6 个 switch tray 组成，计算 tray 集成 4 个 MI455X、1 个 Venice SP7 EPYC 和最多 3 个 Vulcano 800 AI NIC；switch tray 提供 512-port 200G UALoE switch。72 个 GPU 通过多平面 UALoE 形成 scale-up 共享内存域，前端/后端 Ethernet 则承担 scale-out 和管理。
+### 机柜与托盘
 
-### 关键技术细节
+**Helios 机柜**（第 5–6 页）：72 颗 GPU/机柜，31 TB HBM4，260 TB/s scale-up 带宽，1.7 PB/s HBM4 带宽，2.9 EF「AI 算力」，43 TB/s scale-out 带宽。机柜规格为 44OU / ORW-HPR，18 个 1OU 计算托盘，6 个 1OU 交换托盘，后部盲插快接液冷，50 VDC 母线，4 个线缆仓（scale-up fabric），带漏液检测。
 
-- **系统规模**：72 GPU、31 TB HBM4、260 TB/s scale-up、1.7 PB/s HBM4 bandwidth、43 TB/s scale-out，机架为 44OU、ORW-HPR 液冷结构（第 5--6 页）。
-- **UALoE 共享内存**：应用经 runtime/programmable shared-memory fabric 访问远端 HBM；integrated DMA engine 把数据搬运从 WGP 中卸载，并采用 topology-aware 后端（第 10--13 页）。
-- **网络适配器**：每 MI455X 集成 18×800 Gbps UALoE adapters；轻量可靠协议支持 dynamic packing、Ethernet PFC、link-layer replay/end-to-end retransmission 和多 plane 故障替代（第 14 页）。
-- **Vulcano 800**：P4-based、192 MPU、P4DMA、ATS/RDMA translation、packet buffer、可编程 transport/congestion control 和高频 telemetry（第 22--28 页）。
-- **故障与管理**：AMD Fabric Manager 由 3 个 switch node 组成 quorum，可在无 host-stack 依赖下统一处理配置、事件、telemetry；链路、switch、switch tray 故障时 DMA/WGP refs 重新平衡（第 17--21 页）。
-- **安全**：EPYC/MI455X/NIC firmware secure boot、SEV-SNP、DICE attestation、TDISP、端到端 UALoE 加密和 periodic re-key；演讲脚注指出 MI455X 恶意 hypervisor 下 integrity 可能受限（第 15 页）。
+**计算托盘**（第 7 页）：4 个 MI455X EAM；每 EAM 12 条 3×2 UALoE 链路；1 颗 SP7「Venice」CPU，与 MI455X 之间为缓存一致 Infinity Fabric（128 GB/s/dir per GPU）；每 EAM 最多 3 个 Vulcano AI NIC（UALink x8，128 GB/s/dir per NIC）；1 个前置 PCIe CEM NIC；800GbE。
 
-### 核心创新点
+**交换托盘**（第 8 页）：2 颗 512 端口 200G UALoE 交换 ASIC，每 ASIC 72 条 3×2 UALoE 活动链路，每颗交换 10.8 TB/s/dir，UALoE 多平面网络，全对全 GPU 连通，液冷，托盘基础设施约 7 kW 功耗预算。整个机柜共 12 颗 scale-up 交换 ASIC（第 9 页）。
 
-1. 用 UALoE 在 rack 内提供 shared load/store memory fabric，将 GPU-to-GPU 通信抽象为远端内存访问。
-2. 以 P4 可编程 NIC 同时承载 RDMA、存储、collective、拥塞控制和遥测，适应协议演进。
-3. 将网络、计算引用、故障恢复和运维控制统一为 rack-wide coherent control plane。
+### UALoE：跑在以太网上的共享内存 fabric
 
-### 与现有方法的关键区别
+这部分是文稿的技术核心（第 10–14 页），采用分层栈：应用 / 运行时与库 / 编程模型 / 共享内存 fabric / UALoE 传输 / Ethernet + ESUN。
 
-相较仅连接 GPU 的 scale-up 网络，Helios 强调 switch tray、Vulcano NIC、Fabric Manager 和 ORW rack 的共同设计；相较 host-controlled communication，数据搬运、协议处理和故障重平衡更多在 GPU/NIC/fabric 内完成。
+- **分布式共享内存模型**（第 11 页）：通过 memory registration key 与 mmap 语义让远端 GPU 内存可以被本地应用直接映射，导入方（importer）与导出方（exporter）之间由 DMA 引擎搬运数据。
+- **跨整个机柜的 load/store fabric**（第 12 页）：以共享 load/store 方式访问 72 GPU pod 内任意节点的 HBM，底层仍是 DMA 搬运，**Topology-aware DMA 引擎**把数据搬运从 WGP 卸载出来并与计算并行；前后端分离的 DMA 架构动态分摊负载，后端引擎紧邻 UALoE 链路。
+- **集成网络适配器**（第 14 页）：**每颗 MI455X 集成 18 个 800 Gbps UALoE 适配器**（合计 14.4 Tbps ≈ 1.8 TB/s/dir，与前述数字自洽）。适配器内含 fabric 接口、传输层、以太网、安全与管理逻辑。
+- **传输协议**：为 scale-up 设计的轻量可靠协议，开销最小化以追求带宽效率，支持动态打包在带宽与延迟之间权衡，复用以太网 PFC 流控。
+- **可靠性与弹性**：丢包由链路层重放或端到端重传恢复；链路或交换故障时通过**备用网络平面**重传；链路抖动或修复后，网络平面可以重新上线恢复满性能。
+- **底座**：基于开放以太网与 ESUN 标准以及 Broadcom 交换芯片。这一点值得单独记住——AMD 选的是标准以太网生态而非私有互连。
 
-## 证据、案例与论证
+### Scale-up 故障恢复的三级降级（第 17–20 页）
 
-### 证据设置
+| 故障 | 影响范围 | 恢复机制 |
+| --- | --- | --- |
+| 单条链路失效 | 仅影响本地 VPod | DMA 在其余链路上重新分配负载；WGP 的引用在软件控制下重平衡 |
+| 单颗交换失效（12 颗中的 1 颗） | 影响所有 VPod | DMA 在 12 颗中的 11 颗上重新分配 |
+| 整块交换托盘失效（6 块中的 1 块） | 影响所有 VPod | DMA 在 6 块中的 5 块上重新分配 |
 
-- **系统对象**：72-GPU Helios rack、MI455X、Venice EPYC、Vulcano 800、UALoE switch。
-- **评估指标**：链路/聚合带宽、AllReduce、拥塞控制、故障重平衡、telemetry 和安全特性。
-- **证据类型**：系统规格、协议示意和 AMD/厂商网络 benchmark；未给出独立第三方数据。
+### 虚拟 Pod 与安全
 
-### 主要结果
+- **Virtual Pods（VPods，第 16 页）**：可以把节点子集组合成虚拟 pod，pod 之间相互隔离，节点级故障被限制在所在 VPod 内。这是弹性与多租户共用的机制。
+- **机柜级机密计算**（第 15 页）：SEV-SNP 外部内存加密、secure boot、DICE 身份与远程证明、**通用链路加密**（覆盖 GPU–GPU、CPU–GPU、GPU–AI NIC，提供机密性与完整性保护）、TDISP 保护 VM 与设备接口、UALoE 端到端包加密且**交换芯片在 TCB 之外**、主密钥周期性轮换（fast key rotation）。
+- **一条坦率的脚注**：MI455X 存在一处硬件限制，在恶意 hypervisor 场景下可能导致完整性保证失效，但数据与模型机密性仍然成立（第 15 页脚注 1）。这是本仓库中少见的安全能力明示豁免，做威胁模型时必须引用。
 
-| 指标 | 演讲结果 | 证据位置与强度 |
-| --- | ---: | --- |
-| Helios rack | 72 GPU、31 TB HBM4、260 TB/s scale-up、43 TB/s scale-out | 第 5 页；系统规格 |
-| 单 GPU scale-up | UALoE 1.8 TB/s/dir；GPU-to-CPU coherent IF 128 GB/s/dir | 第 6--7 页；链路规格 |
-| Vulcano NIC | 800 Gbps、192 MPU、P4DMA programmable datapath | 第 22--23 页；产品规格 |
-| MRC collective | 消息 ≥64 KB 时单/多 plane 均可达到 800G Tx/Rx | 第 27 页；厂商 benchmark |
-| 故障恢复 | link/switch/switch-tray 故障后在剩余 plane/tray 上重平衡 | 第 17--20 页；架构行为描述 |
+### 控制面：AMD Fabric Manager（第 21 页）
 
-### 消融/案例要点
+AFM 管理整个 scale-up 网络，自身是跑在交换节点上的 3 节点集群：可承受 1 次故障，双故障时进入只读（quorum）。它不依赖 host 软件栈，直接走交换机的 GPU 控制路径，提供统一面板的配置、事件与遥测，并提供 REST API 与上层编排对接，特性包括自动发现与策略、即插即用运维。
 
-- 论文式消融不适用；演讲通过 UALoE 共享内存、P4 可编程 transport 和多 plane RAS 的分层设计比较传统 host/network 路径。
-- MRC 与 RoCEv2 的对比图强调 packet spray、selective ACK 和 drop convergence，但完整吞吐/延迟原始数据未在文本中披露。
-- 安全部分明确区分 confidentiality/integrity，并对恶意 hypervisor 的 integrity 限制做了脚注，不能将其描述为无条件安全保证。
+### AI NIC：Vulcano 800（第 22–28 页）
+
+- **可编程定位**：P4 架构，**192 个 MPU**，ATS 与 RDMA 翻译服务转发给 P4DMA；P4DMA 让传输层本身可编程（RoCEv2、MRC、UEC 等）；MPU 增加指令以支持拥塞控制；支持细粒度事务与松弛排序内存操作；高频遥测；追求低功耗低延迟。三种部署模式：前端以太网 NIC、scale-out RDMA NIC、NVMeoF 存储发起/目标。
+- **协议演进叙事**（第 24 页）：从 RoCEv2 到多路径与选择性 ACK（MRC、UEC）再到失效处理与多平面路径探测（MRC），最终是超大规模源路由。P4DMA 的价值在于新协议可以在可编程引擎上实现，而不必等下一代硅。
+- **拥塞控制的演进链条**（第 25 页）：DCQCN → MRC NSCC/RCC（窗口化多路径感知）→ UEC CSIG（新拥塞信号）→ PCC 框架（Bring Your Own CC）。
+- **高频遥测**（第 26 页）：P4 流水线把 AI NIC 的统计以高频写入 host memory，覆盖 system / LIF / QP / path 多级，支持过滤、监控时间窗与高分辨率统计环。
+## 证据、案例与论证（MRC 性能对比）
+
+- **MRC 带宽与平面配置**（第 27 页）：消息 ≥64 KB 时，1×800G、2×400G、4×200G、8×100G 四种平面配置在 1–4K QP 下都能跑满 800G Tx / 800G Rx，说明平面拆分不牺牲聚合带宽。
+- **MRC 对 RoCEv2 的性能优势**（第 28 页，All Reduce 场景）：正常情况下 MRC QP1 在 8–16 GB 消息上达到约 350 Gbps，RoCEv2 最好配置（QP16）约 260 Gbps；在 1% 丢包场景下差距拉大到约 150 Gbps 对约 28 Gbps（约 5×）。文稿把原因归于 packet spray 与基于 SACK 的丢包收敛。
 
 ## 局限性与未来方向
 
-- **演讲范围明确的局限**：Helios 和 Vulcano 的性能/可靠性数字主要来自厂商规格和演示，没有公开系统级 p99、故障 MTBF 或多租户 QoS。
-- **方法限制**：多平面、P4 transport 和 shared-memory abstraction 增加协议、验证和调度复杂度；具体一致性模型、内存顺序和软件 API 尚未披露。
-- **潜在改进方向**：公开 UALoE protocol/driver、跨 rack scale-out trace、故障注入结果、功耗/热数据和 P4 pipeline 的可编程边界。
-- **证据边界**：链路峰值带宽不等于端到端模型 tokens/s；演讲没有给出完整 RTL、综合或 silicon measurement。
+- **证据性质**：厂商演示文稿，无同行评审，无独立复现。第 28 页的两张吞吐曲线只有图例、坐标轴与「All Reduce」场景说明，没有给出测试平台、QP 配置、交换机型号或样本量。
+- **口径不一致，跨文稿引用时要注意**：同一代 fabric 在这份文稿中叫 UALoE 也写作 IFoE（Infinity Fabric over Ethernet）；链路计数有三种表述——「每 EAM 12×3×2 UALoE」「每 EAM 36 条 UALoE 链路（x2）」（见同期的单芯片文稿）与「72× IFoE @ 200G」。按 18×800 Gbps = 14.4 Tbps = 1.8 TB/s 反推，72 条 200G 与 36 对 x2 是自洽的，但文稿没有给出换算说明。
+- **数字缺失**：没有交换 ASIC 或 NIC 的面积、功耗、延迟或成本；第 8 页的 7 kW 只覆盖交换托盘的液冷基础设施，不是 ASIC 功耗；2.9 EF 仍未标注精度；第 29 页 summary 写「超过 30 TB HBM4」，与前面 31 TB 的口径略有出入。
+- **未回答的问题**：「正接近光互连切换点」只是一句判断，没有任何关于距离、速率或时间点的量化；VPod 隔离的强度只给了一句「相互隔离」，没有说明是硬件分区还是软件策略；AFM 的 3 节点 quorum 如何避免与 GPU 控制路径形成单点，也没有展开。
+- **未来方向**：文稿没有设 future work 章节，隐含方向是 P4DMA 上承载更多自定义传输与拥塞控制，以及 scale-up 距离向光互连迁移。
 
 ## 个人点评
 
-- **亮点**：将 GPU、CPU、AI NIC、交换机、管理控制面和安全放进一套可运维系统，尤其适合分析 rack-scale AI 的“网络即内存”趋势。
-- **不足**：系统设计信息丰富，但缺少对协议开销、缓存一致性、尾延迟和故障恢复时间的量化。
-- **启发**：AI 集群的 scale-up fabric 应同时提供数据通路、故障平面、拥塞遥测和安全信任根，不能只追求裸链路带宽。
+- **亮点**：选择标准以太网 + PFC + Broadcom 交换芯片来承载 scale-up 共享内存，是这个设计里最大胆也最值得关注的决定。它把机柜级互连放在开放的以太网生态上，而不是私有 PHY；相应地，协议可编程性从"能不能做"变成"用 P4DMA 怎么做"。可靠性设计也很具体：三级故障降级都给出了影响范围与恢复动作（DMA 重平衡 + 软件控制下的 WGP 引用重平衡），而不是笼统地宣称容错。安全部分主动在脚注里写明「恶意 hypervisor 下完整性保证可能失效、机密性仍成立」，这种明确豁免比笼统的「支持机密计算」有用得多。
+- **不足**：整套性能叙事的基础是第 27、28 两页的曲线，而这两页恰恰是信息最少的——没有测试平台、没有样本量、没有交换机配置，MRC 对 RoCEv2 的约 5× 优势（1% 丢包）无法独立判断。链路计数与 fabric 命名的口径不统一，会让想按图复现拓扑的人反复核对。此外 72 颗 GPU 共享内存域的实际延迟完全没有给出，而 load/store 语义的可用性恰恰取决于远端访问延迟是否接近本地内存——文稿只给了带宽（1.8 TB/s/dir），避开了延迟这个更难的数字。
+- **启发**：对做 scale-up 互连的人，这份材料提供了三个可比较的设计点。第一，用交换式多平面拓扑替代全直连，换来的是分区、隔离与容错能力，代价是经过交换芯片的延迟与交换芯片本身的功耗（后者未披露）。第二，把可靠性做成分层降级并让 DMA 引擎负责重新分摊流量，可以让上层软件不必处理链路级故障。第三，控制面独立于 host 软件栈并跑在交换节点上，是机柜级系统里容易被忽略但很实用的一层设计。
 
 ## 工程化三问总结
 
 ### 1. 它解决了什么瓶颈？
 
-- **应用场景与核心瓶颈**：72-GPU rack 的 GPU 间高带宽共享内存、scale-out、拥塞和故障可用性。
-- **现有方法为何不足**：host-stack 控制路径增加延迟，固定 transport 无法覆盖 collective、RDMA、存储和多平面故障。
-- **论文或文档证据**：1.8 TB/s/dir UALoE、260 TB/s scale-up、P4DMA/多 plane replay 与故障重平衡（第 5、14、17--28 页）。
+- **应用场景与核心瓶颈**：让 72 颗 GPU 在一个机柜内作为单一计算引擎工作，使超过 30 TB 的 HBM4 可以被跨节点以 load/store 方式访问，从而支撑超出单卡容量的大模型与 KV cache。核心瓶颈是 scale-up 互连：既要带宽（1.8 TB/s/dir per GPU），又要分区隔离、可靠性和安全性，同时距离受电信号限制。
+- **现有方法为何不足**：文稿没有直接批评既有方案，其隐含论点是私有互连难以同时满足开放性、可编程性与弹性；采用标准以太网底座可以让协议在 P4DMA 上演进，而可靠性通过多平面与链路层重放获得（第 12–14 页）。
+- **论文证据**：可引用的是规格与机制——每颗 GPU 集成 18 个 800 Gbps UALoE 适配器（合计 1.8 TB/s/dir）、12 颗 scale-up 交换 ASIC、三级故障降级的具体恢复动作、MRC 相对 RoCEv2 的吞吐曲线（正常约 350 对 260 Gbps，1% 丢包约 150 对 28 Gbps）。这些是厂商宣称的直接证据。由于没有独立复现、没有远端访问延迟数据、也没有交换与 NIC 的功耗数据，「瓶颈得到缓解」的判断在带宽维度成立，在延迟与成本维度不可评估。
 
 ### 2. 用了什么结构或训练方法？
 
-- **整体结构与数据流**：MI455X/EPYC/NIC 经 UALoE switch tray 组成 shared-memory scale-up；Vulcano P4DMA 在 NIC 内处理 RDMA、collective、拥塞和遥测，Fabric Manager 维护 rack 状态。
-- **关键模块/结构**：UALoE adapters、switch ASIC、多 plane transport、P4DMA、packet buffer、Fabric Manager、EPYC/MI455X/NIC secure firmware。
-- **训练目标、损失函数或优化方法**：不适用；系统支持 AI 训练/推理 collective，未描述训练算法。
-- **数据与训练策略**：未给出模型训练数据；以链路/网络 benchmark 和系统配置验证设计目标。
+此处按系统结构与软件栈组织，文稿不涉及训练方法。
 
-### 3. 对芯片架构、RTL、验证有什么启发？
+- **整体结构与数据流**：机柜由 18 个计算托盘与 6 个交换托盘组成。每个计算托盘含 4 个 MI455X EAM 与 1 颗 EPYC「Venice」，通过 UALoE 接入 12 颗交换 ASIC 构成的多平面全对全网络；每 EAM 另接最多 3 个 Vulcano AI NIC 用于 scale-out。软件侧的访问路径是：应用通过 memory registration key 与 mmap 建立远端缓冲映射 → 共享内存 fabric 承接 load/store → 实际搬运由 Topology-aware DMA 引擎按环路拓扑分发到 UALoE 链路。
+- **关键模块/结构**：18×800 Gbps 集成 UALoE 适配器、轻量可靠传输协议（动态打包 + 以太网 PFC）、多平面交换网络（每 ASIC 512 端口 200G）、Topology-aware DMA（前后端分离）、Virtual Pods 分区、通用链路加密与 UALoE 端到端包加密、AFM 控制面、Pensando Vulcano 800 AI NIC（192 MPU 的 P4 流水线 + P4DMA + 高频遥测）。
+- **训练目标、损失函数与数据策略**：不适用。协议与拥塞控制方面给出的是可编程能力（P4DMA 支持 RoCEv2/MRC/UEC，PCC 框架支持 bring your own CC）与 MRC 的实测对比，而非训练方法。
 
-- **芯片架构**：把 DMA、协议、拥塞、telemetry、故障恢复和安全隔离纳入统一 scale-up fabric；为不同 message size 选择 packing/collective/plane。
-- **RTL**：需要 DMA front/back end、shared-memory address translation、P4/transport pipeline、replay/ACK、multi-plane failover、telemetry ring 和安全密钥管理；一致性/顺序为 `TBD`。
-- **验证**：覆盖 packet loss/replay、乱序和流控、AllReduce/AllGather、链路/交换机故障、热插拔、DMA 重平衡、加密/attestation 和 P4 配置变更。
-- **推断边界**：协议细节、RTL PPA、形式化性质和 silicon failure data 未公开；实现建议属于工程推断。
+### 3. 对芯片架构和 RTL 有什么启发？
+
+- **芯片架构**：四条可直接引用的结构判断。第一，把 scale-up 互连建在标准以太网与商用交换芯片之上，用 PFC 做流控、用多平面做故障绕行，等于把「互连的演进」从硅的设计周期转嫁给协议与固件（第 13–14 页）。第二，把网络适配器做进 GPU——每颗 MI455X 集成 18 个 800 Gbps 适配器，配合紧邻 UALoE 链路的前后端分离 DMA 引擎，是"网络在封装内、搬运不经计算单元"的具体形态（第 12–14 页）。第三，可靠性被设计为分层降级（链路 → 交换 → 交换托盘），每级都明确由 DMA 重平衡流量、由软件重平衡 WGP 引用，这要求 DMA 引擎具备按拓扑重新分摊的能力（第 17–20 页）。第四，安全能力被下沉到链路层：通用链路加密覆盖 GPU–GPU、CPU–GPU、GPU–AI NIC，交换芯片被排除在 TCB 之外，这直接决定了 fabric 上的加密引擎与密钥轮换逻辑必须放在端点而非交换节点（第 15 页）。文稿明确承认 scale 距离「正接近光互连切换点」，但没有量化，何时切换 `TBD`。
+- **RTL**：文稿不提供 RTL 细节，以下均为工程推断。链路层重放与端到端重传要求 UALoE 适配器内有重放缓冲、序列号管理与超时重传状态机，且需支持在平面间切换重传。通用链路加密需要在线加密引擎与密钥轮换逻辑，并对吞吐与延迟造成额外开销。Topology-aware DMA 需要地址生成、拓扑表查询与多链路流量分摊的硬件支持。跨 72 GPU 的共享 load/store 语义要求远端地址译码与一致性/ordering 支持，文稿提到 NIC 侧支持松弛排序的细粒度事务，说明 ordering 语义是这套系统的实现难点之一（推测）。P4DMA 与 192 MPU 的可编程流水线本身就是一个必须同时满足可编程性与线速的 RTL 设计问题，且文稿强调低功耗低延迟，这部分复杂度没有量化。AI NIC 的 ATS 翻译路径要求与主机侧的地址翻译服务协同。
+- **推断边界**：第 1、2 问基于演示文稿的规格与机制描述，属厂商宣称；其中 MRC 对 RoCEv2 的性能对比缺少实验条件，证据强度弱。第 3 问的芯片架构结论是对文稿结构选择的归纳；RTL 部分文稿完全未涉及，全部为工程推断。远端访问延迟、交换与 NIC 的功耗面积、光互连切换点、VPod 隔离的硬件实现方式均 `TBD`。

@@ -3,104 +3,125 @@
 ## 基本信息
 
 - **标题**：A Research Retrospective on the AMD Exascale Computing Journey
-- **文档类型**：论文（工业研究回顾）
-- **作者**：Gabriel H. Loh、Michael J. Schulte、Mike Ignatowski、Vignesh Adhinarayanan 等
-- **机构**：Advanced Micro Devices, Inc.
-- **发表venue**：2023 ACM/IEEE ISCA
+- **文档类型**：论文（工业回顾 / ISCA'23 特邀论文）
+- **作者**：Gabriel H. Loh 等 70 余人（AMD 研究团队集体署名）
+- **机构**：Advanced Micro Devices, Inc.（AMD）
+- **发表 venue**：ISCA'23（50th ACM/IEEE International Symposium on Computer Architecture），2023 年 6 月 17–21 日，Orlando, FL, USA
 - **年份**：2023
-- **链接**：[DOI:10.1145/3579371.3589349](https://doi.org/10.1145/3579371.3589349)
+- **链接**：DOI 10.1145/3579371.3589349
 
 ## 一句话总结
 
-> 本文回顾 AMD 从 DOE FastForward/DesignForward 研究到 Frontier 的近十年异构、chiplet、HBM、互连和软件协同过程，重点总结如何在 20 MW 约束下把长期架构假设收敛为可交付系统。
+> AMD 用十年时间把 2012 年画的 Exascale Heterogeneous Processor（EHP）概念图迭代了四版，最终落地的 Frontier 节点既不是 EHP 也不是离散节点（DNA），而是「拆散后再用 Infinity Fabric 重新拼合」的混合体：1.1 EF 的 HPL 性能，每 EF 19.2 MW。
 
 ## 研究动机与问题定义
 
-- **要解决的核心问题**：在 Dennard scaling 结束、内存墙和功耗上限下，如何提前十年规划 exascale 计算机，并让 CPU、GPU、内存、封装、网络和软件一起满足真实科学负载。
-- **现有方法的不足**：只追逐 LINPACK 峰值会忽略内存密集、通信密集和不规则应用；单一研究路线容易被工艺、市场和供应链变化淘汰。
-- **本文的切入角度**：以 AMD 的公开/工业研发路线为案例，比较 EHP（异构处理器）与 DNA（数据流/网络架构）等多条路线如何合作演化成 Frontier 节点。
+- **要解决的核心问题**：2011 年美国 DOE 的 Exascale RFI 给出了一组十年后要达成的系统指标，硬件厂商需要在技术路线尚未确定的情况下给出可执行的架构方案。
+- **现有方法的不足**（当时的时代背景）：论文列举了 2012 年前后已经出现的多重预警信号——Dennard scaling 终结、Moore's Law 放缓、Memory Wall、功耗上升。同时 DOE 还担心商业市场（HPC 之外）未必会把所需技术按时送到市场（第 1 页）。
+- **本文的切入角度**：不是提出新架构，而是公开一套工业研究如何规划十年期目标的完整过程，并且明确区分「做对了的」「做早了等时机的」和「没成的」。这类记录在计算机体系结构文献中很少见。
 
-## 核心方法
+## 核心结构（概念演进与研究路径）
 
-### 方法概述
+### 2011 年 DOE 的边界条件
 
-2011 年 DOE 目标包括 1000 PF 级性能、20 MW 计算功耗、128 PB 系统内存和广泛工作负载。AMD 先从已知技术（GPU 加速、APU 统一内存、HBM/2.5D）出发，再探索 NVRAM、3D 堆叠、chiplet、光互连、可靠性和编程模型。
+论文复现了 2011 年 RFI 的目标（Figure 1(b)，第 1–2 页），这四个数字决定了后面十年的设计空间：
 
-最终 Frontier 节点采用 64 核 EPYC 7A53、4 个 MI250X 加速器、DDR4 + HBM2E、Infinity Fabric 一致性互连和 GPU 直接 NIC；软件通过 ROCm、HIP、OpenMP、BLAS、PyTorch/TensorFlow 等支持迁移和性能可移植性。
+| 指标 | 目标 |
+| --- | --- |
+| LINPACK 性能 | 1000 PF（1 EF） |
+| 非 LINPACK 负载性能 | 300 PF（针对不规则、非计算密集的负载） |
+| 功耗上限 | 20 MW（仅计算部分，不含存储与机房基础设施） |
+| 系统内存容量 | 128 PB，明确允许使用 NVRAM |
 
-### 关键技术细节
+论文特别指出两条容易被忽略的要求：一是 300 PF 这条意味着机器必须「均衡」，不能只为单一 benchmark 优化；二是 NVRAM 被显式写入需求，反映当时社区对 DRAM 微缩即将终结的担忧（第 1–2 页）。
 
-- **EHP 路线**：CPU/GPU 异构、统一地址空间、CPU 与 GPU 共享内存和 I/O；通过 chiplet 和封装实现不同 CPU:GPU 比例。
-- **Frontier 节点**：每节点 64 核 EPYC、4 个 MI250X；每个 MI250X 两个 CDNA2 GPU die、128 GB HBM2E、峰值 47.9 TF DP 和约 3.2 TB/s 带宽（第 10 页）。
-- **封装与互连**：MI250X 使用 Elevated Fan-out Bridge；Infinity Fabric 跨包保持 cache coherence；NIC 直接连到 accelerator HBM，避免 CPU 中转。
-- **软件协同**：ROCm 提供驱动、runtime、compiler、library 和工具；HIP、Kokkos、RAJA、OCCA 降低 CUDA/CPU 迁移成本。
+DOE 随后通过五个 *Forward 公私合作项目（FastForward、FastForward 2、PathForward、DesignForward、DesignForward 2）推进研究，AMD 全部参与（第 2 页）。
 
-### 核心创新点
+### EHP 概念的四次迭代
 
-1. 把十年研究分解为可迭代的技术假设，并通过 DOE proxy applications 和系统集成商反馈持续修正。
-2. 以 chiplet、HBM、异构计算、直接 NIC 和一致性互连共同构成可扩展节点，而不是孤立追求 GPU 峰值。
-3. 将 co-design 从模型/硬件扩展到设施、冷却、软件栈和系统供应链。
+**v1，2012（Figure 3，第 4 页）**：核心是一颗 APU 配 3D DRAM。8 个 x86 核 + 最多 12 DP TF 的向量单元，共享 128 GB 封装内 DRAM、4 TB/s 带宽；封装外挂多个 NVRAM 模块，每个模块是 NVRAM die 叠在带 PIM 能力的逻辑 die 上，中间用 memory-side cache 做暂存；集成光子互连的 NIC。CPU die 叠在 GPU die 之上，整体 2.5D 挂在硅 interposer 上，封装功耗预算 160 W。按 12 TF/节点计算，达到 1 EF 至少要 83,334 个节点，考虑实际效率则超过 10 万节点，反推每节点功耗上限 200 W。
 
-### 与现有方法的关键区别
+**v2，2014（Figure 5，第 5 页）**：硅成本加速上升（Figure 4(a)）促使 AMD 押注 chiplet，于是这一版复用主流服务器 CPU 的 CCD 与 IOD。代价是放弃了 v1 的激进 3D 组织：CCD 与 IOD 占用封装面积，DRAM 改为每颗 GPU chiplet 上叠一摞并加倍堆叠高度以补偿数量减少。NVRAM 被移除。
 
-本文不是单一芯片算法或微架构方案，而是工业研发回顾：核心贡献是决策路径、失败路线和系统级约束，评价对象是 Frontier 交付结果而非某个独立 accelerator kernel。
+**v3，2016（Figure 6，第 6 页）**：回到 8 摞 DRAM，保留 DRAM-on-GPU 的 3D 堆叠，GPU 算力相对 v2 翻倍；引入 active interposer，把 2.5D die-to-die 接口等非计算资源从 GPU chiplet 下沉到 interposer 上，以便 chiplet 里塞更多计算。active interposer 复用 IOD 的成本思路（用较老工艺节点制造）。
 
-## 证据、案例与论证
+**v4，2018（Figure 7，第 6–7 页）**：借 PathForward 探索更大封装（含后来成为 OCP OAM 的外部形态），放弃 CPU/GPU chiplet 的 3D 堆叠，把 8 个小 GPU chiplet 合并成 2 个大 die，CCD 从 8 个减到 2 个。GPU 之间不放经由 IOD 的绕行路径，而是在封装基板上直接走 Infinity Fabric 链路。
 
-### 证据设置
+**DNA（Figure 8，第 7–8 页）**：与 EHP 并行推进的离散节点方案，4 CPU + 8 加速器，同样支持缓存一致与平坦物理地址空间，只是跨封装的带宽更低、延迟更高。它受系统集成商欢迎的原因是可自由搭配 CPU:GPU 比例，并能与客户已有的其它 ISA 软件栈共存。
 
-- **数据来源**：DOE 2011 RFI、FastForward/DesignForward 项目、AMD 内部研究路线、Frontier 系统公开规格和 TOP500/HPCG 结果。
-- **对比对象**：早期 EHP/DNA 概念、传统 CPU/GPU/内存/互连选择及不同 exascale 研究假设。
-- **评估指标**：峰值与持续性能、功耗、内存带宽/容量、系统扩展、软件可移植性和实际科学应用。
+### 各版本的失败原因（论文的核心价值）
 
-### 主要结果
+| 版本 | 被否掉的原因 |
+| --- | --- |
+| v1 | 3D 堆叠在当时仅有 microbump 技术，未考虑 hybrid bonding；16 层 DRAM 叠在 GPU 之上的散热无解 |
+| v2 | 高估了 DRAM 堆叠高度（当时商用 HBM 只有 8-high）；GPU 热量被困在 16 层 DRAM 之下；CPU:GPU 配比失衡；封装左右不对称导致 IOD 偏心、CTE 失配，可能引起 die 开裂与 bump 断裂 |
+| v3 | DRAM-on-GPU-on-active-interposer 的「三重堆叠」制造复杂度高，判断在首批 exascale 平台的时间点无法商用 |
+| v4 | 固定了 CPU:GPU 比例，不同负载偏好的客户无法调整；封装内硅面积仍然过大，供电与 I/O 布线困难 |
 
-| 指标 | 结果 | 证据 |
-| --- | ---: | --- |
-| Frontier 规模 | 9,408 节点、74 个机柜 | 第 10 页 |
-| 节点计算 | 64 核 EPYC 7A53 + 4× MI250X | 第 10 页 |
-| MI250X | 2 个 CDNA2 GPU die、128 GB HBM2E、47.9 TF DP、约 3.2 TB/s | 第 10 页 |
-| HPL | 约 1.1 EF，超过 Fugaku 2× | 第 11 页图 11 |
-| 功耗 | 21.1 MW；归一化到 1 EF 为 19.2 MW/EF | 第 11 页 |
-| HPCG | 随系统规模近似理想扩展 | 第 11 页图 11 |
-| 真实科学应用 | 一项自然语言图分析超过 1 EF 持续性能 | 第 11 页 |
+被移除的 NVRAM 有一条明确的实证理由：与 DOE 应用专家做 co-design 时发现，让程序员手工把最热的数据结构 pin 到封装内 DRAM 往往反而更差，因为程序视角的热点数据本来就命中片上缓存，对后端是 DRAM 还是 NVRAM 并不敏感（第 5 页）。
 
-### 消融/路线比较要点
+### 十个研究方向的得与失（第 4 节）
 
-- EHP 与 DNA 没有进行相互排斥的竞赛，最终 Frontier 吸收两条路线的优点；这是研发路线比较，不是可重复的模型消融。
-- 论文强调 20 MW、内存容量、通信密集负载和交付风险共同决定设计，说明单一 LINPACK 结果不足以评价系统。
-- 研究计划从“十年预测”转为多路径、合作式迭代；作者承认部分早期 NVRAM/架构假设未按原时间表落地。
+- **做成了**：compute-optimized GPU（催生 RDNA 与 CDNA 的产品线分工）；CPU 微架构研究；功耗-性能效率（25x20 与 30x25 目标）；可靠性（与 DOE 国家实验室做现场故障统计，推动 HBM3 ECC 架构改进并在 JEDEC 标准化）；编程模型与软件优化（ATMI、Kokkos、RAJA、HIP、OpenMP 移植）；建模与仿真（gem5 + 解析模型 + 真机测量的组合）。
+- **做早了或没成**：多级内存（作者称「Holy Grail 仍然难寻」，平均表现好的方案在特定访问模式下会不可接受地退化，且需要程序员大量介入）；PIM（技术成熟度与 exascale 时间表不匹配）；集成硅光（同上）；异步数据依赖任务（XTQ 的单节点收益明显，但验收 benchmark 仍倾向 bulk-synchronous 实现，官方测试未采纳）。
+
+## 证据、案例与论证（非实验型文档）
+
+论文没有受控实验，证据形式是设计史料 + 最终产品的实测数据。
+
+**最终落地形态**（Figure 9、Figure 10，第 8–10 页）：Frontier 节点 = 1 颗 64 核 EPYC 7A53 + 4 颗 Instinct MI250X，通过 Infinity Fabric 缓存一致地耦合。论文给出一个精确的对应关系：v4 EHP 的构成是 2 个 CPU chiplet + 2 个 GPU die + 8 摞 DRAM，而 Frontier 节点可以看作 **4 个 EHP 实例通过 EPYC 的 IOD 拼合**（Figure 9 用不同颜色标出）。8 个 CCD 分成 4 个 NUMA 域，每个 NUMA 域配一颗 MI250X，每个 CCD 对应 MI250X 封装内的一个 GPU die。
+
+**节点规格**（第 9–10 页）：
+
+| 项 | 数值 |
+| --- | --- |
+| 系统规模 | 9,408 个计算节点 / 74 个机柜 |
+| CPU | 64 核 EPYC 7A53，8 通道 DDR4，512 GB，205 GB/s |
+| 加速器 | 4 × Instinct MI250X，每颗 2 个 GPU die + 8 摞 HBM2E |
+| 每颗加速器容量 / 带宽 | 128 GB（每 die 64 GB）/ 3.2 TB/s |
+| 每颗加速器 DP 峰值 | 47.9 TF |
+| GPU die 工艺 | CDNA2，6 nm，580 亿晶体管 |
+| 封装 | Elevated Fan-out Bridge（EFB），用多个小硅桥替代超 reticle 的大 interposer |
+| 互连 | GPU–GPU 200+200 GB/s，GPU–CPU 50+50 GB/s，每颗加速器直连 NIC |
+
+**性能与能效证据**（Figure 11，第 11 页）：HPL RMAX 达到 1.1 EF，超过当时第一名 Fugaku 两倍以上；1.1 EF 下实测功耗 21.1 MW，归一化到 1.0 EF 为 **19.2 MW**，满足 20 MW 目标的尺度和意图；Frontier 与 Frontier TDS 在 2022 年 6 月的 Green500 上分别拿下第 1 与第 2；HPL-MxP 混合精度排名第 1；HPCG 在 Frontier 上接近线性扩展，论文把这一点部分归因于每颗加速器直连 NIC，网络数据可以不经 CPU 直接注入本地 HBM。
+
+**应用侧证据**：2022 年 Gordon Bell Prize 由使用 Frontier 做激光-物质相互作用 3D 模拟的团队获得，另一支入围团队用 Frontier 对上千万篇医学文献做自然语言图分析，持续性能超过 1 EF。论文用后者对照 2011 年 RFI 提出的 300 PF 非 LINPACK 目标。
 
 ## 局限性与未来方向
 
-- **作者提到的局限**：论文是 AMD 工业回顾，很多研究细节、失败实验和商业约束无法完全公开；Frontier 当时仍处于早期运行阶段。
-- **潜在改进方向**：进一步公开跨应用的能效、故障率、软件栈和 AI/ML workload 数据，并将 post-exascale 互连、内存和 chiplet 研究与实际部署闭环。
-- **证据边界**：HPL/HPCG 和系统规格是公开指标，不等同于通用 AI 推理或训练性能；自然语言图分析案例不能泛化为所有 AI 负载。
+- **作者明确披露的未达成项**：原始时间表（2019–2020）未实现，首次 exascale 记录出现在 2022 年 6 月；多级内存、PIM、集成硅光、异步任务调度四项研究未进入第一代 exascale 机器。
+- **回顾型文献的固有边界**：
+  - 论文只给出概念图与定性取舍，没有为被放弃的 EHP 版本提供面积、功耗、时序或成本的量化对比，读者无法判断「否掉 v2 的散热问题」到底有多严重。
+  - 存在幸存者偏差：所有叙述都围绕 AMD 最终获胜的路径展开，其它厂商在同一时期的技术选择没有纳入对照。
+  - 作者自己说明本文「不是任何组件的技术深挖或产品披露」，Frontier 各组件细节需查其它文献。
+  - 功率数据为 21.1 MW 总量与归一化的 19.2 MW/EF，未给出测量方法、负载组成或误差范围。
+  - 未讨论整个系统层面的成本，而 DOE 的决策本身就包含成本约束。
 
 ## 个人点评
 
-- **亮点**：把工艺、封装、内存、NIC、软件和设施约束放到同一决策框架，特别适合学习大型 AI/HPC 系统的研发管理。
-- **不足**：缺少可直接复用的 RTL 级设计细节和各候选路线的定量成本/风险表。
-- **启发**：AI 芯片项目应把 proxy workload、系统集成商反馈和长期 TCO 设为架构输入，而不是在芯片 tape-out 后才验证软件适配性。
+- **亮点**：把四个被否掉的设计版本连同否决理由一并公开，这在工业论文里非常罕见，对正在做 chiplet、3D 堆叠或封装选型的人有直接参考价值。几条否决理由尤其具体：DRAM 堆叠高度被高估（当时 HBM 只有 8-high）、GPU 热量被困在 DRAM 层之下、封装左右不对称引发 CTE 失配与 die 开裂、三重堆叠的制造复杂度赶不上时间表。这些都是「技术上可行」与「能按时量产」之间的差距，比任何仿真结果都更有说服力。对 NVRAM 的否决理由同样值得记住：程序员视角的热点数据本就命中缓存，多级内存的收益并不像容量数字暗示的那样直接。
+- **不足**：缺少量化。四个 EHP 版本之间没有一张统一的面积、功耗、带宽、成本对比表，读者只能接受作者的定性判断。性能部分也没有把 Frontier 的性能拆解为工艺、封装、互连、软件各自的贡献，因此「co-design 很有价值」这个结论缺乏可分离的证据支撑。此外论文反复强调 co-design 与多路径并行，但对多路径并行的成本（同时维护 EHP 与 DNA 两套方案的人力与时间代价）没有任何讨论。
+- **启发**：最有价值的一条经验是「封装面积是被低估的设计约束」。从 v1 到 v4，EHP 的每一次改版都源于封装面积与散热预算的变化，而不是计算单元本身的改进。第二条是最终产品往往不是任何单一概念的直接落地，而是概念的重新组合：Frontier 节点等于 4 个 EHP 拆开后用 IOD 拼起来。对做架构规划的人，这意味着概念设计阶段就应该考虑「哪些部分可以拆到封装外而不损失关键指标」。
 
 ## 工程化三问总结
 
 ### 1. 它解决了什么瓶颈？
 
-- **应用场景与核心瓶颈**：exascale/HPC 和包含 AI 的异构科学负载，瓶颈是功耗、内存墙、互连、封装规模和软件可用性。
-- **现有方法为何不足**：单一高峰值处理器或只优化 LINPACK 无法覆盖不规则、通信密集和内存密集工作负载；十年技术预测也会被工艺和市场变化打破。
-- **论文或文档证据**：Frontier 1.1 EF、19.2 MW/EF、HPCG 近似理想扩展和 GPU 直接 NIC；这些是系统结果，不是单独 AI accelerator 证据。
+- **应用场景与核心瓶颈**：为 2011 年设定的 exascale 目标（1 EF、20 MW、128 PB、非 LINPACK 负载 300 PF）设计计算节点。核心瓶颈是数据搬运与封装：在 Moore's Law 放缓、Dennard scaling 终结的前提下，无法只靠工艺微缩达到目标，必须在封装、存储层次和互连上同时下注（第 1–2 页）。
+- **现有方法为何不足**：2012 年的既有做法沿用常规服务器封装（SP3），封装面积不足以容纳所需的 DRAM 容量与带宽；纯 APU 与纯离散节点方案各有不可接受的代价——APU 固定了 CPU:GPU 比例且散热困难，离散节点的跨封装带宽与延迟受 pin 限制（第 7–8 页）。
+- **论文证据**：Frontier 最终以 1.1 EF / 21.1 MW 落地，归一化 19.2 MW/EF，同时 HPL-MxP 混合精度第 1 与 HPCG 近线性扩展（Figure 11）；NIC 直连加速器 HBM 是 HPCG 扩展性的解释因素之一。这是论文的直接证据。反方向上也有证据：多级内存、PIM、硅光三项被判定为时机不成熟，说明这些问题并未在机器中解决。功耗数字未给出测量方法，证据强度中等。
 
 ### 2. 用了什么结构或训练方法？
 
-- **整体结构与数据流**：EPYC CPU + MI250X CDNA2 GPU + DDR4/HBM2E；Infinity Fabric 提供统一一致性地址空间，NIC 可直接把网络数据注入 GPU HBM。
-- **关键模块/结构**：chiplet/桥接封装、HBM、高带宽 GPU、cache-coherent fabric、直接 NIC、ROCm/HIP 软件栈。
-- **训练目标、损失函数或优化方法**：不适用；论文讨论系统 co-design 和科学/HPC 应用。
-- **数据与训练策略**：使用 DOE proxy apps、HPL/HPCG 和真实科学案例迭代设计目标。
+此处按「结构与组织」回答，论文不涉及训练方法。
 
-### 3. 对芯片架构、RTL、验证有什么启发？
+- **整体结构与数据流**：最终节点是「拆散 + 重聚」的混合体。CPU 侧为 1 颗 EPYC 7A53（8 个 CCD + IOD），GPU 侧为 4 颗 MI250X（每颗 2 个 GPU die 共封装 8 摞 HBM2E），两侧通过跨封装的缓存一致 Infinity Fabric 互连。8 个 CCD 划分成 4 个 NUMA 域，一个 NUMA 域配一颗加速器，构成一个「逻辑 EHP」。CPU 与 GPU 共享平坦物理地址空间并保持缓存一致，每颗加速器直连 NIC。GPU die 与 HBM 用 EFB 封装，以多个小硅桥替代超 reticle 尺寸的被动 interposer。
+- **关键模块/结构**：复用主流服务器 CCD 与 IOD 的 chiplet 策略、CPU 与 GPU 分离封装以取得对称散热与机械应力、GPU–GPU 在封装基板上直连 Infinity Fabric 以避免绕行 IOD、直连 NIC。
+- **训练目标、损失函数与数据策略**：不适用。
 
-- **芯片架构**：需要把 CPU/GPU/NIC/HBM 视作统一 scale-up 域，支持异构内存一致性、直接通信和可配置 CPU:GPU 比例；chiplet 是容量和良率的重要杠杆。
-- **RTL**：关注 die-to-die bridge、Infinity Fabric 一致性、HBM 控制器、NIC-to-HBM DMA、NUMA/地址映射和 RAS；具体协议和一致性状态机为 `TBD`。
-- **验证**：覆盖一致性与内存排序、GPU/NIC 直接 DMA、HBM ECC、链路故障、NUMA 访问、功耗/热约束和 ROCm 编程模型的软硬件一致性。
-- **推断边界**：论文没有给出 Frontier RTL 或公开验证计划；上述内容是从系统结构推导的工程建议。
+### 3. 对芯片架构和 RTL 有什么启发？
+
+- **芯片架构**：这是本仓库里对封装与内存层次最有参考价值的一篇。可直接引用的结论有：DRAM 堆叠高度受商用 HBM 供给约束（当时 8-high 是上限，16-high 的假设直接毁掉 v2）；把高功耗逻辑压在多层 DRAM 之下会造成无法解决的热问题；封装左右不对称会因 CTE 失配引发 die 开裂与 bump 断裂，对称与热机应力必须与性能同时考虑；active interposer 可以把 2.5D die-to-die 接口从计算 die 下沉到较老工艺节点，从而把计算 chiplet 的硅面积让给算力（v3 的核心思路）；封装面积不足时，把 CPU 与 GPU 拆到独立封装再用缓存一致互连重新拼合，可以在不牺牲一致性的前提下获得不同 CPU:GPU 比例与更好的热机对称性。此外论文给出一个实用的设计约束推算方式：按每节点 12 TF 反推 1 EF 需要 83,334 节点，再按 20 MW 反推每节点功耗上限 200 W。
+- **RTL**：论文不提供任何 RTL 实现细节，以下均为工程推断。跨封装的缓存一致 Infinity Fabric 意味着一致性协议、目录或侦听逻辑、地址解码与重试机制必须跨 4 颗加速器与 CPU 工作，这部分逻辑的规模与验证复杂度会显著上升（推测）。平坦物理地址空间要求每个代理都能解码指向任意加速器 HBM 的地址，需要一套跨封装的地址映射与译码逻辑（推测）。加速器直连 NIC 要求 HBM 侧具备网络数据的注入路径与相应仲裁（推测）。论文中唯一有 RTL 意味的直接证据是可靠性方向：现场故障统计推动了 HBM3 ECC 架构的改进并在 JEDEC 标准化，也就是说 ECC 编解码与故障上报路径的设计需求来自实测数据而非假设（第 4.4 节）。
+- **推断边界**：第 1、2 问基于论文正文与图表，属论文证据；第 3 问的芯片架构部分多数结论（堆叠高度、热、CTE、active interposer、拆封再拼合）直接来自论文对四个版本的取舍叙述，属论文证据的整理；RTL 部分论文完全未涉及，全部为工程推断。论文没有面积、时序、功耗的量化对比，Frontier 的性能也没有拆分到各子系统，相关归因 `TBD`。
