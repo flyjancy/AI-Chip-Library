@@ -3,221 +3,175 @@
 ## 基本信息
 
 - **标题**：You Only Cache Once: Decoder-Decoder Architectures for Language Models
-- **文档类型**：论文（arXiv preprint，cs.CL）
-- **作者**：Yutao Sun\*†‡、Li Dong\*†、Yi Zhu†、Shaohan Huang†、Wenhui Wang†、Shuming Ma†、Quanlu Zhang†、Jianyong Wang‡、Furu Wei†⋄（\*同等贡献，⋄通讯作者）
-- **机构**：Microsoft Research（†）、清华大学（‡）
-- **发表 venue**：arXiv（未标注正式会议）
+- **文档类型**：论文（arXiv 预印本，20 页）
+- **作者**：Yutao Sun（共同一作）、Li Dong（共同一作）、Yi Zhu、Shaohan Huang、Wenhui Wang、Shuming Ma、Quanlu Zhang、Jianyong Wang、Furu Wei（通信作者）
+- **机构**：Microsoft Research、Tsinghua University
+- **发表 venue**：arXiv:2405.05254v2 [cs.CL]（2024-05-09 的 v2）
 - **年份**：2024
-- **原始来源**：[arXiv:2405.05254v2](https://arxiv.org/abs/2405.05254)，2024-05-09；代码 https://aka.ms/YOCO
-- **本地原文**：`You-Only-Cache-Once-Decoder-Decoder-Architectures-for-Language-Models.pdf`（同目录，20 页）
+- **链接**：https://aka.ms/GeneralAI、https://aka.ms/YOCO
 
 ## 一句话总结
 
-> 论文提出 decoder-decoder 架构 YOCO，把全局 KV cache 的产生与消费解耦：前一半层（self-decoder）用高效自注意力生成唯一一份全局 KV，后一半层（cross-decoder）通过 cross-attention 复用同一份 cache，从而在保持 decoder-only 行为与竞争性精度的前提下把 KV 显存降约 L 倍、prefill 时间从 O(N²) 降为 O(N)。
+> YOCO 把 decoder-only 模型拆成「前半 self-decoder（用高效注意力）+ 后半 cross-decoder（对同一份全局 KV 做 cross-attention）」，从而**只缓存一次 KV**：KV 缓存复杂度从 $O(LND)$ 降到 $O((N+L)D)$、prefill 复杂度从 $O(LN^2D)$ 降到 $O(LND)$，在 H100 上 1M 上下文时显存降到 1/9.4、prefill 从约 300 s 降到约 4 s（71.8×）、512K 时吞吐提升 9.6×，代价是 3B 模型上 1.6T token 训练后的下游平均分 0.636 对同期 Transformer 基线的 0.619–0.634。
 
 ## 研究动机与问题定义
 
-- **要解决的核心问题**：长上下文 LLM 服务的内存瓶颈与 prefill 延迟瓶颈。decoder-only 的 KV cache 随 `序列长度 × 层数` 线性增长（`O(LND)`），使推理变成 memory-bounded；prefill 的注意力复杂度为 `O(LN²D)`，长输入下延迟不可接受。
-- **现有方法的不足**（第 1 页）：
-  - **encoder-only（BERT）与 encoder-decoder（T5）**：因双向编码，自回归生成时必须重新编码输入与已生成 token；且生成阶段无法充分利用 encoder 参数，在多轮对话场景尤其低效。
-  - **decoder-only（GPT）**：靠 KV cache 避免重编码，但每层都要各自保存 N 个 K/V，显存占用随层数放大。
-  - **论文给出的量化锚点**（第 2 页）：65B 模型（已用 GQA + 8-bit KV 量化）在 512K token 时 KV 占约 **86GB**，超过单张 H100-80GB；7B 模型在 4×H100 上（已用 Flash-Decoding + kernel fusion）prefill 450K 需约 **110s**，1M 需约 **380s**。
-- **本文的切入角度**：不做"少算 attention"，而是做**结构性的 cache 去重**——把全局 KV 的"生产"与"消费"分配给不同层组，使全局 KV 只生成一次（论文的原话是 "only caches key-value pairs once"，脚注 2 明确说明"once"特指全局 cache，self-decoder 仍有常数级 cache）。
+- **要解决的核心问题**：KV 缓存既是推理容量的瓶颈，也是 prefill 延迟的根源。缓存大小随序列长度与层数同时增长（Transformer 为 $O(LND)$），而 prefill 的自注意力复杂度是 $O(LN^2D)$。论文用一个具体数字锚定成本：**512K 上下文时 Transformer 的 prefill 需要约 180 秒**。
+- **现有几条路线的不足**（第 1 页）：
+  - **encoder-only**（BERT）：双向编码，自回归生成时每一步都要重新编码整个输入与输出序列。
+  - **encoder-decoder**（T5）：双向编码器 + 单向解码器，但解码器生成时**没有充分利用编码器参数**，多轮对话场景尤其明显。
+  - **decoder-only**（GPT）：靠缓存 KV 避免重编码历史，是当前标准做法，但缓存量随层数线性增长。
+- **切入角度**：既然 KV 缓存的冗余在于**每一层都存一份自己的 KV**，那就让所有层**共享同一份全局 KV**——用 cross-attention 让后半部分层去读前半部分层产出的那一份。同时把前半部分层换成"推理内存为常数"的高效注意力（sliding-window 或 gated retention），使这份全局 KV 可以一次性算完、只存一份。
 
 ## 核心方法
 
-### 方法概述
+### 架构结构（第 3–4 页）
 
-YOCO 共 `L` 层，前 `L/2` 层是 **self-decoder**，其余是 **cross-decoder**（Figure 2，第 3 页）。给定输入 `X⁰ = [x₁, …, x_|x|]`：
+YOCO 共 $L$ 层，**前 $L/2$ 层是 self-decoder，后 $L/2$ 层是 cross-decoder**：
 
-1. self-decoder 用**高效自注意力**（ESA）逐层得到 `X^l = Self-Decoder(X^{l-1}), l ∈ [1, L/2]`；
-2. 自解码器输出 `X^{L/2}` 经线性投影生成**唯一的全局 KV cache** `K̂ = LN(X^{L/2})W_K`、`V̂ = LN(X^{L/2})W_V`；
-3. cross-decoder 各层各自产生 Q，全部 cross-attend 到同一份 `K̂, V̂`：`Y^l = Attention(LN(X^l)W_Q^l, K̂, V̂) + X^l`；
-4. 最后 `X^L` 经 softmax 分类器做 next-token 预测。
+- **Self-decoder**：输入 $X^0$，用高效自注意力（ESA）与 SwiGLU 逐层计算
+  $$Y^l = \text{ESA}(\text{LN}(X^l)) + X^l, \qquad X^{l+1} = \text{SwiGLU}(\text{LN}(Y^l)) + Y^l$$
+  带 causal mask。**关键性质是高效自注意力的推理内存为 $O(1)$，即 KV 缓存数量是常数**——例如 sliding-window attention 的缓存只取决于窗口大小而与输入长度无关。
+- **Cross-decoder**：用 self-decoder 的输出 $X^{L/2}$ 生成**唯一一份全局 KV**：
+  $$\hat K = \text{LN}(X^{L/2})W_K, \qquad \hat V = \text{LN}(X^{L/2})W_V$$
+  然后后 $L/2$ 层各自用 query 去 attend 这一份 KV：
+  $$\hat Q^l = \text{LN}(X^l)W_Q^l, \qquad Y^l = \text{Attention}(\hat Q^l, \hat K, \hat V) + X^l$$
+  同样带 causal mask。cross-attention 与 grouped-query attention（GQA）兼容，可进一步压缩 KV 内存。
+- 两种 decoder 块的其余布局与 Transformer 一致：pre-RMSNorm、SwiGLU、GQA。
 
-两层都使用**因果 mask**，因此整体对外行为等价于标准 decoder-only 自回归模型，不需要 encoder-decoder 式的双向编码，可直接复用现有 decoder-only 的预训练与推理范式。自解码器的 cache 是常数（滑动窗口的 `O(C)` 或 gated retention 的固定 size 状态 `S ∈ R^{d×d}`），cross-decoder 层共享同一份全局 cache，因此总 cache 为 `O(N + CL)`，长序列下约等于 `O(N)`——即相比 Transformer 省约 L 倍。
+### 两个复杂度结论（Table 1、Table 2）
 
-Figure 2 的视觉核对确认了数据流方向：KV Cache 是图中**左侧一个独立框**，由下半部分 Efficient Self-Attention 的 K/V 写入，由上半部分 Cross-Attention 的 K/V 读出；Q 在两侧各自本地生成。
+| | Transformer | YOCO |
+| --- | --- | --- |
+| KV 缓存内存复杂度 | $O(LND)$ | $O((N+L)D)$ |
+| Prefill 注意力时间复杂度 | $O(LN^2D)$ | $O(LND)$ |
 
-### 关键技术细节
+（$N$ 为序列长度，$L$ 为层数，$D$ 为隐藏维度。）由于 $CL \ll N$，需要的缓存数约为 $O(N)$——**"you only cache once"**。相对 Transformer，YOCO 大约省 $L$ 倍的缓存显存。
 
-- **Self-Decoder 块结构**（式 1）：`Y^l = ESA(LN(X^l)) + X^l`，`X^{l+1} = SwiGLU(LN(Y^l)) + Y^l`，`LN` 为 RMSNorm，ESA 使用因果 mask。核心性质是 **O(1) 推理显存**（常数个 KV cache）。
-- **Gated Retention（gRet，默认 ESA 选项，第 3.1 节）**：在 retention 上加入**数据相关的门控衰减** `γ = sigmoid(XW_γ)^{1/τ}`（温度项 `τ` 使 `γ` 趋向 1 以增强记忆）。三种**等价**表示：
-  - **并行表示**（训练用）：`gRet(X) = (QK^⊤ ⊙ D)V`，`Q = (XW_Q) ⊙ Θ`，`K = (XW_K) ⊙ Θ`，`V = XW_V`，`Θ_n = e^{inθ}`，`D_nm = ∏_{i=m+1}^{n} γ_i`（n ≥ m，否则 0）。
-  - **循环表示**（推理用，常数显存）：`S_n = γ_n S_{n-1} + K_n^⊤ V_n`，`out = Q_n S_n`。
-  - **分块循环表示**（prefill / 长序列训练用）：按 chunk size `B` 切块，输出 = inner-chunk（块内并行，`(Q_[i]K_[i]^⊤ ⊙ D_[i])V_[i]`）+ cross-chunk（跨块递推，`(Q_[i]R_{i-1}) ⊙ β_[i]`），中间状态递推为 `R_i = K_[i]^⊤(V_[i] ⊙ β_[i]) + β_{iB} R_{i-1}`。Appendix B（第 16–17 页，式 9–11）给出了三种表示的等价性证明。
-  - 衰减被设计为 **head-wise 而非 element-wise**，以便充分利用 NVIDIA tensor core（第 5 页明确说明）。
-- **Multi-Head Gated Retention**（式 7）：逐头计算 gRet，`GroupNorm_h` 逐头归一化后拼接，再经 swish gate 与 `W_O` 输出。
-- **Cross-Decoder**（式 3）：`Q̂^l = LN(X^l)W_Q^l`，`Y^l = Attention(Q̂^l, K̂, V̂) + X^l`。标准多头注意力，与 GQA 兼容（可进一步压缩 cache）。
-- **Sliding-Window Attention（备选 ESA，第 3.2 节）**：窗口因果 mask `B_ij = 0 (i−C < j ≤ i)` 否则 `−∞`，窗口 `C = 1024`（第 4.2 节），cache 复杂度 `O(C)`。
-- **Chunk Parallelism（Appendix A，第 16 页，Figure 11）**：长序列训练时按 chunk 切到不同 GPU。数据流经视觉核对为 `X --Split--> X₁/X₂ --> M₁/M₂ --Project--> Q,K,V --> All-Gather Once --> KV --> O₁/O₂`。self-decoder 只有相邻设备依赖（gRet 的递推 state 或滑动窗口），通信量小；cross-decoder 的 KV **只 all-gather 一次**而非每层通信，显著降低通信频率与显存碎片。
-- **推理的两阶段模式**（Figure 3，第 4 页）：prefill 阶段 `Cross-Decoder` 以灰色 **(Skipped)** 状态整体跳过，只跑 self-decoder 得到 KV Cache；generation 阶段才启用蓝色 Cross-Decoder 逐 token 生成。
+### 推理优势的两条机制（第 4–5 页）
 
-### 核心创新点
+1. **省显存、服务更多 token**：推理容量瓶颈从权重变为 KV 缓存（图 7b 的分解显示随上下文增长 KV 缓存成为主项），减少缓存后可以增大 batch，进而提升吞吐。
+2. **Prefill 提前退出**：由于 cross-decoder 复用 self-decoder 的输出，**prefill 阶段可以在进入 cross-decoder 之前提前退出**（图 3 标注 "Cross-Decoder (Skipped)"）。论文据此给出两层收益：前向计算只需一半层数（至少减半 prefill 延迟）；self-decoder 的高效注意力本身也快。
 
-1. **全局 KV cache 只生成一次**：把"每层各自 cache"改为"半层生成、半层共享"，是显存复杂度的结构性下降，而非量化/驱逐类的近似压缩。Table 1/2（第 4 页）给出复杂度对比：KV cache 显存 `O(LND) → O((N+L)D)`，prefill 时间 `O(LN²D) → O(LND)`。
-2. **Prefill 可提前退出且不改变最终输出**：cross-decoder 只依赖 self-decoder 输出，故 prefill 可"early exit"，至少省一半层的前向计算；由于 cross-decoder 在生成阶段会补算，最终输出与全量 prefill 一致。作者称这是"computation dependency"带来的固有红利。
-3. **gated retention 的数据相关门控**：为 self-decoder 提供兼具训练并行性、常数推理显存与长程记忆能力的算子，并使 chunk-parallel 训练友好。
-4. **对分布式长序列训练的结构性优势**：KV 只通信一次，降低了长序列训练的通信瓶颈。
+### Self-decoder 的设计选择（第 5–6 页）
 
-### 与现有方法的关键区别
+只要模块的推理内存为常数即可用。论文实验了两种：
 
-- **vs encoder-decoder（T5）**：形式上像"前半 encode + 后半 decode"，但 YOCO 全部层因果，可直接做 decoder-only 自回归；且不存在 encoder 参数在生成阶段被闲置的问题。
-- **vs 纯高效注意力（RetNet / Mamba / Sliding-Window / Sparse Transformer）**：这些方法以"降低注意力复杂度"换效率，但弱化了全局检索能力（Table 8 中 AR-Hit 明显劣于 Transformer）；YOCO 用**廉价的 self-decoder 做局部/递推 + 昂贵的全局 cross-attention 只做一次**，保住了全局注意力（Table 4 multi-needle 的优势主要来源于此）。
-- **vs GQA / KV 量化 / KV 驱逐**：正交且可叠加——论文的 Transformer 基线本身已开启 GQA + Flash-Decoding + kernel fusion。
+- **Gated retention**（记为 $\text{YOCO}_{\text{gRet}}$）：prefill 阶段用 chunk-recurrent 表示，生成阶段用 recurrent 表示，**chunk size 设为 256**，作者用 Triton 实现了 kernel。
+- **Sliding-window attention**（$\text{YOCO}_{\text{SWA}}$）：缩放实验中的窗口大小为 1024。
+
+缩放实验的结论是 **$\text{YOCO}_{\text{gRet}}$ 优于 Transformer 与 $\text{YOCO}_{\text{SWA}}$**，作者归因于"注意力与 retention 的混合架构，两者的归纳偏置互补"，并补充说以 1:3 交错注意力与 retention 模块也能获得类似收益。
 
 ## 实验与结果
 
 ### 实验设置
 
-- **数据集与任务**：
-  - LM Eval Harness 零样本任务：ARC-C、ARC-E、BoolQ、HellaSwag、OBQA、PIQA、Winogrande、SciQ；
-  - Needle-in-a-Haystack（单针，10 次重复取平均）与 Multi-needle Retrieval；
-  - book 与 repository-level code 的长序列累计平均 NLL；
-  - ZeroSCROLLS 四任务（Qasper / GovReport / QMSum / NarrativeQA，附录 G.2）。
-- **基线方法**：OpenLLaMA-v2-3B、StableLM-base-alpha-3B-v2、StableLM-3B-4E1T；Llama 优化版 Transformer；长上下文对比 LWM-1M-text、MiniCPM-128K、ChatGLM3-128K、YaRN-Mistral-128K；架构对比 Mamba、RetNet、Hybrid H3、gRetNet。
-- **评估指标**：零样本准确率、验证 loss、检索准确率、累计平均 NLL、GPU 显存 / prefill 延迟 / 吞吐（tokens/s）。
-- **YOCO-3B 训练配置**（第 4.1 节 + Table 5）：26 层、hidden 3072、FFN 8192、vocab 100,288、24 个 Q head / 8 个 KV head（GQA）、非嵌入参数 **2.83B**；序列长度 4096、batch 4M token、AdamW β=(0.9, 0.95)、峰值 lr 3.2e-4、warmup 1000 步、5T-token 的线性衰减 schedule（实际训到 1.6T）、weight decay 0.1、dropout 0.0。
-- **Scaling 曲线配置**（Table 6）：160M–13B 共 7 个规模，head dim of gRet 固定 256，为对齐参数量 Transformer 的 FFN 为 `8/3·d`、YOCO 为 `3d`（原文如此表述，疑为 `(8/3)d` 与 `3d` 的对照），序列 2048、batch 0.25M token、10B token 训练量。
+- **3B 主实验**：跟随 StableLM-3B-4E1T 的训练配方；隐藏维度 3072、26 层、head dim 128（StableLM 为 80，改为 128 是为了更好的 kernel 支持）、GQA（24 个 query head / 8 个 KV head）、使用 gated retention。**非嵌入参数量 2.8B**（StableLM-3B-4E1T 为 2.7B，OpenLLaMA-v2-3B 为 3.2B）。序列长度 4096，batch 4M token，AdamW（$\beta = 0.9, 0.95$），最大学习率 3.2e-4（1000 步 warmup，线性衰减到 1.28e-5），总调度 5T token，实际训练 400k 步即 **1.6T token**。tokenizer 为 `tiktoken-cl100k_base`。
+- **缩放实验**：160M、400M、830M、1.4B、2.7B、6.8B、13B，用相同数据与设置训练，**batch 0.25M token、序列长度 2k、共 40k 步即 10B token**，用验证损失作指标并拟合 scaling law。
+- **长上下文**：把 YOCO-3B 逐级扩到 64K → 256K → 1M，batch 保持不变，按序列长度上采样训练数据，**不使用长指令微调数据**。
+- **推理测速**：H100-80GB，序列长度 32K 到 1M，假设给定上下文后生成最后 1,024 个 token；对照的 Transformer **使用 GQA + Flash-Decoding + kernel fusion**（论文称这是为了公平比较）。
 
 ### 主要结果
 
-**Table 3｜LM Eval Harness 零样本平均（第 7 页）**
+**3B 模型的下游任务（Table 3，LM Eval Harness 零样本）**
 
-| 方法 | 训练 token | ARC-C | ARC-E | OBQA | SciQ | Avg |
-|---|---:|---:|---:|---:|---:|---:|
-| OpenLLaMA-3B-v2 | 1T | 0.339 | 0.676 | 0.260 | 0.924 | 0.619 |
-| StableLM-base-alpha-3B-v2 | 1T | 0.324 | 0.673 | 0.264 | 0.921 | 0.612 |
-| **YOCO-3B** | 1T | **0.379** | **0.731** | **0.298** | 0.924 | **0.634** |
-| StableLM-3B-4E1T | 1.6T | — | 0.688 | — | 0.913 | — |
-| **YOCO-3B** | 1.6T | **0.396** | **0.733** | **0.300** | **0.921** | **0.636** |
-| **YOCO-3B-1M**（扩到 1M 上下文） | 1.6T+ | **0.413** | **0.747** | **0.300** | **0.932** | **0.645** |
+| 模型 | ARC-C | ARC-E | BoolQ | Hellaswag | OBQA | PIQA | Winogrande | SciQ | **平均** |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| **1T token 训练** | | | | | | | | | |
+| OpenLLaMA-3B-v2 | 0.339 | 0.676 | 0.657 | 0.700 | 0.260 | 0.767 | 0.629 | 0.924 | 0.619 |
+| StableLM-base-alpha-3B-v2 | 0.324 | 0.673 | 0.646 | 0.686 | 0.264 | 0.760 | 0.621 | 0.921 | 0.612 |
+| **YOCO-3B** | 0.379 | 0.731 | 0.645 | 0.689 | 0.298 | 0.763 | 0.639 | 0.924 | **0.634** |
+| **1.6T token 训练** | | | | | | | | | |
+| StableLM-3B-4E1T | — | 0.688 | — | — | — | 0.762 | 0.627 | 0.913 | — |
+| **YOCO-3B** | 0.396 | 0.733 | 0.644 | 0.698 | 0.300 | 0.764 | 0.631 | 0.921 | **0.636** |
+| **扩到 1M 上下文** | | | | | | | | | |
+| **YOCO-3B-1M** | 0.413 | 0.747 | 0.638 | 0.705 | 0.300 | 0.773 | 0.651 | 0.932 | **0.645** |
 
-注：StableLM-3B-4E1T 的 1.6T 行为其技术报告中的中间数字，"—"表示原表未给出该任务的数值。
+论文的表述是 "comparable results with previous well-tuned Transformer language models"。1T token 时 YOCO 平均分 0.634 高于两个对照（0.619/0.612），但对照的 StableLM-3B-4E1T 在该行缺多项数据（原文以 "—" 表示），可比性有限。
 
-**Table 4｜Multi-needle 检索准确率（128K 长度，第 8 页）**
+**模型规模缩放（图 4）**
+
+160M 到 13B 的验证损失与 Llama 式 Transformer 相当，$\text{YOCO}_{\text{gRet}}$ 优于 Transformer 与 $\text{YOCO}_{\text{SWA}}$。**需要强调训练预算很小：仅 10B token**。
+
+**长上下文（图 5、图 6、Table 4）**
+
+- **Needle-In-A-Haystack（1M 上下文）**：YOCO-3B-1M **接近满分**（图 5 的分数矩阵）。评估设置跟随 Gemini 1.5 与 LWM，同一深度与长度跑 10 次取平均。
+- **多针检索（128K，Table 4）**：
 
 | 模型 | 规模 | N=1 | N=2 | N=4 | N=8 |
-|---|---:|---:|---:|---:|---:|
+| --- | ---: | ---: | ---: | ---: | ---: |
 | YaRN-Mistral-128K | 7B | 0.02 | 0.12 | 0.08 | 0.20 |
 | LWM-1M-text | 7B | 1.00 | 0.90 | 0.76 | 0.62 |
 | MiniCPM-128K | 2.4B | 1.00 | 1.00 | 0.54 | 0.56 |
 | ChatGLM3-128K | 6B | 0.94 | 0.72 | 0.52 | 0.44 |
-| **YOCO-3B-1M** | **3B** | 0.98 | 0.98 | **0.84** | 0.56 |
+| **YOCO-3B-1M** | 3B | 0.98 | 0.98 | **0.84** | 0.56 |
 
-YOCO 以一半参数量逼近 7B 的 LWM-1M-text，并优于同/更大规模的其他长上下文模型。YaRN-Mistral-128K 因仅做位置插值而显著落后。
+  论文的结论是：YOCO-3B-1M 用**一半的模型规模**达到与 LWM-1M-text（7B，由 Llama-2-7B 继续训练）相当的水平，并超过 MiniCPM-128K 与 ChatGLM3-128K。注意 N=8 时 YOCO 的 0.56 与 MiniCPM 相同、低于 LWM 的 0.62。
+- **长序列困惑度**：在 book 与 repository-level code 数据上，累积平均 NLL 随上下文长度持续下降，曲线接近幂律。
 
-**Table 8｜160M 规模精细困惑度（Zoology 诊断集，第 19 页）**
+**推理剖析（图 7–10，H100-80GB）**
 
-| 方法 | Valid. | AR-Hit | First-Occur |
-|---|---:|---:|---:|
-| Mamba | 3.645 | 1.555 | 4.126 |
-| RetNet | 3.633 | 1.466 | 4.131 |
-| Hybrid H3 | 3.591 | 1.251 | 4.130 |
-| gRetNet | 3.600 | 1.354 | 4.116 |
-| Transformer | 3.564 | 1.219 | 4.104 |
-| YOCO_SWA | 3.553 | 1.202 | 4.094 |
-| **YOCO_gRet** | **3.530** | **1.199** | **4.067** |
+| 指标 | 结果 |
+| --- | --- |
+| 1M 上下文推理显存 | YOCO **12.4 GB**，Transformer 为 **9.4×**（图 7a 各长度下的放大倍数为 32K 1.95×/2.32×、128K 3.01×、256K 4.16×、512K 6.39×、1M 9.38×） |
+| 32K 上下文显存 | YOCO 约省 **2×** |
+| 每 token 的 KV 显存 | 65B 模型下，**1 GB 显存 YOCO 可服务 128K token，而带 GQA 的 Transformer 只能服务 1.6K token**（约 **80×**）；模型越大节省越多（1.2B 24×、6.4B 32×、13B 40×、30B 64×、65B 80×） |
+| Prefill 延迟 | 512K：约 180 s → **<6 s**；1M：约 300 s → **71.82×** 加速；各长度加速比 32K 2.87×、256K 15.55×、512K 30.3×、1M 71.82× |
+| 吞吐 | 512K 时 Transformer **4.5 token/s** vs YOCO **43.1 token/s**，即 **9.6×**；各长度 2.57×（64K）、2.72×（32K）、2.77×（128K）、4.37×（256K） |
 
-AR-Hit 衡量联想召回能力，First-Occur 反映常规语言建模性能。YOCO_gRet 在两项上均优于所有对比架构。
+论文对吞吐提升的两条解释：prefill 时间减少；显存降低后可以用更大的 batch。
 
-**推理侧 profiling（Figure 7–10，第 10–11 页）**
+**图 1 摘要给出的 512K 口径**：显存 9.6×、吞吐 6.4×、prefill 延迟 30.3×。注意图 1 的显存 9.6× 与图 7 的 9.38×（1M）不是同一长度，图 1 的标注为 "@512k" 但数值与图 7/9/10 在 512K 下的 6.39×/30.3×/9.56× 不一致，引用时需以正文图为准。
 
-硬件为 H100-80GB，模型为 3B；基准 Transformer 已开启 GQA + Flash-Decoding + kernel fusion；gated retention 在 prefill 用 chunk-recurrent 表示（chunk size 256）、生成用 recurrent 表示，并实现了 Triton kernel。评测序列长度 32K–1M，最后 1024 token 为待生成部分。
+### 消融与设计选择
 
-| 维度 | 结果（已逐图视觉核对） |
-|---|---|
-| **显存**（Fig 7a，纵轴 GPU Memory 0–120GB） | 加速比 1.95×(32K) / 2.32×(64K) / 3.01×(128K) / 4.16×(256K) / 6.39×(512K) / **9.38×(1M)**；1M 时 YOCO 总推理显存仅 **12.4GB** |
-| **显存构成**（Fig 7b） | 图例 KV Cache / Weight / Other；1M 长度时两根柱均标 **9.38×** |
-| **KV cache 每 token**（Fig 8，纵轴 KB/token 0–600） | 1.2B **24×**、6.4B **32×**、13B **40×**、30B **64×**、65B **80×**；"YOCO 用 1GB 可服务 128K token，而带 GQA 的 Transformer 65B 只能支持约 1.6K token" |
-| **Prefill 延迟**（Fig 9，纵轴 0–300s） | 2.87×(32K) / 5.05×(64K) / 8.36×(128K) / 15.55×(256K) / **30.3×(512K，180s → <6s)** / **71.82×(1M)** |
-| **吞吐**（Fig 10，纵轴 0–600 tokens/s） | 2.72×(32K) / 2.57×(64K) / 2.77×(128K) / 4.37×(256K) / **9.56×(512K，4.5 → 43.1 token/s)** |
-
-Figure 1（第 1 页）给出了 512K 长度的汇总：GPU Memory ↓(GB) **6.4X**、Throughput ↑(wps) **9.6X**、Prefilling Latency ↓(s) **30.3X**。
-
-**长上下文验证（第 4.3 节）**
-
-- **Needle-in-a-Haystack**（Fig 5）：横轴 Context Length 128K–1M，纵轴 Depth 0–100%，色条 Score 0.0–1.0。视觉核对显示整张热力图近全绿，格内无具体数值，即 **1M 长度下近完美检索**。
-- **长序列 NLL**（Fig 6）：横轴 Sequence Position 对数刻度 10–1M，纵轴 NLL（无数值刻度，越低越好）。book 与 repository-level code 两条曲线均随序列变长持续下降，说明模型确实利用了长距离依赖；作者称曲线近似幂律，并注明差距受验证样本噪声影响。
-- **ZeroSCROLLS**（Fig 12，附录 G.2）：四子图 Qasper / GovReport / QMSum / NarrativeQA，横轴 Length 4096–16384，纵轴 PPL（各子图范围不同，如 Qasper 2.5–4.0、NarrativeQA 4.5–6.0）。YOCO_gRet 与 Transformer 在所有任务与长度上一致优于 Mamba、Sparse Transformer、Hybrid H3。
-
-### 消融实验要点
-
-- **self-decoder 算子选择（关键消融）**：YOCO_gRet 在 160M–13B 全区间一致优于 YOCO_SWA 与 Llama 优化 Transformer（Fig 4，横轴 #Parameters (B) 对数刻度 10⁰–10¹，三条曲线 Transformer / YOCO_SWA / YOCO_gRet）。作者归因于 attention 与 retention 的归纳偏置互补，并补充说明自己用 1:3 交织 attention/retention 也能获得类似增益，与 Jamba 等混合架构结论一致。在 Table 8 的 AR-Hit / First-Occur 细分上同样是 YOCO_gRet 最优。
-- **模型规模可扩展性**：Fig 4 显示 loss 随参数量（160M→13B）下降且趋势与 Transformer 可比，说明收益不是小模型特例。
-- **训练 token 可扩展性**：Table 3 中 1T 与 1.6T 两个 checkpoint 趋势一致（0.634 → 0.636），说明继续加 token 不会退化。
-- **上下文可扩展性**：Fig 5 的 1M 检索近满分、Fig 6 的 NLL 单调下降。
-- **复杂度对比（Table 1/2）**：KV cache 显存 `O(LND) → O((N+L)D)`，prefill 时间 `O(LN²D) → O(LND)`（N、L、D 分别为序列长度、层数、hidden 维）。
-- **正交性**：论文的 Transformer 基线本身已包含 GQA、Flash-Decoding、kernel fusion，说明 YOCO 的收益与这些优化可叠加。
+- **self-decoder 模块选择**：$\text{YOCO}_{\text{gRet}}$ > Transformer > $\text{YOCO}_{\text{SWA}}$（图 4，160M–13B，10B token）。窗口大小 1024。
+- **混合注意力与 retention**：以 1:3 交错两种模块也有类似收益，作者引用同期 hybrid 架构工作佐证。
+- **chunk size**：gated retention 的 chunk size 设为 256。
 
 ## 局限性与未来方向
 
-- **作者明确提到的局限**：
-  - 脚注 2 承认"only cache once"是就全局 cache 而言，**self-decoder 仍需存储常数级 cache**（记为 `O(CL)`），只是在长序列下可忽略。原文未给出该常数项开始可忽略的 crossover 点。
-  - 长上下文扩展依赖**渐进式长度训练**（64K → 256K → 1M）加 RoPE θ 调整（Table 7：训练长度 65,536 / 262,144 / 1,048,576 分别对应 lr 8e-5 / 4e-5 / 2e-5、RoPE θ 640K / 5M / 80M、token 量 6B / 4B / 1.5B），与一般的长上下文扩展手段难以完全剥离。
-- **作者提出的未来方向（结论第 5 节）**：
-  - **YOCO + BitNet + Groq**：Groq 把权重全放 SRAM，但容量瓶颈限制模型规模与输入长度；YOCO 省 KV、BitNet 省权重，作者预期组合后部署成本可再降数量级。这属于**展望，非本文验证结果**。
-  - **多模态融合**：cross-attention 天然适合多模态融合，self-decoder 的因果性契合流式视频，异步 MLLM 可避免不同数据流互相阻塞（对机器人等实时应用关键）。同样未被本文实验覆盖。
-  - **KV cache 原生机制**：由于 cache 集中且复用，可以做单份压缩、单份检索索引、以及 pre-caching 支持 native RAG / LLM 原生搜索。
-- **本文未覆盖 / 证据薄弱处**：
-  - **无任何芯片实现数据**：全部效率结论都是 GPU（H100）侧 profiling，属于架构级代理指标；没有 post-synthesis、post-layout 或硅后功耗/面积数据。
-  - **总 FLOPs 未减少**：cross-decoder 每层仍要对同一份长 KV 做全局 cross-attention，算力开销并未下降。论文只论证了显存、延迟与吞吐，没有给出总 FLOPs 或能耗口径的完整对比——对算力受限（而非显存受限）的场景，YOCO 未必是净收益。
-  - **精度结论集中在 3B 与 ≤1.6T token**：13B 只出现在 10B token 的 scaling 曲线上，没有大规模下游任务评测。
-  - **缺少与 KV 量化/驱逐/稀疏化的组合实验**：Table 3 基线本身带 8-bit KV 量化的说法出现在动机部分，但正文未系统评测 YOCO 与这些正交压缩技术叠加后的效果。
-  - **缺多轮对话 / prefix caching 的端到端评测**：prefill early-exit 与 cross-decoder 重算对 flush 和调度的影响未量化。
-  - **消融不完整**：`L/2` 这个切分比例是固定选择，论文未报告 self-decoder 与 cross-decoder 层数比例（如 1:3、3:1）的扫描结果。
-  - **图 12 图例命名**：附录 Figure 12 图例包含 `YOCO_gRet`，与 Table 8 命名一致。
+- **缩放实验的训练预算偏小**：160M–13B 的缩放曲线只用了 **10B token**（40k 步 × 0.25M）。在这个预算下拟合出的 scaling law 与结论，与当代动辄万亿 token 的实践距离较大；论文用"scaling laws can be well-fitted"作为依据，但未给拟合的外推误差。
+- **3B 主实验的对照组数据不完整**：Table 3 中 1.6T token 行的 StableLM-3B-4E1T 有 5 项为 "—"（论文取自其技术报告），因此这一行不是完整对照；1T 行 YOCO 的 0.634 对 0.619/0.612 是完整可比的，但优势幅度不大，且三项（BoolQ、Hellaswag、PIQA）实际低于 OpenLLaMA-3B-v2。
+- **"prefill 提前退出不改变最终输出"这一说法需要限定**：KV 缓存由 self-decoder 的输出 $X^{L/2}$ 完全决定，所以跳过 cross-decoder 不影响缓存本身；但生成第一个 token 仍需要 cross-decoder 的末层隐藏状态。论文与图 3 的表述容易让人理解为 prefill 完全不需要 cross-decoder。这个机制本身是成立的，但"至少减半 prefill 延迟"的收益中，有一部分会以第一个 token 的首次解码步（单 query 位置、代价小）形式出现。
+- **推理测速的对照口径需注意**：对照的 Transformer 已经用了 GQA + Flash-Decoding + kernel fusion（论文称是为公平比较），但 **YOCO 侧用的是为 gated retention 专门写的 Triton kernel**，且 chunk size 固定为 256。两侧的工程优化程度是否完全对等，论文没有给出逐项拆解。
+- **摘要图的数字与正文图不一致**：图 1 的 "@512k" 标注下给出显存 9.6×、吞吐 6.4×、prefill 30.3×，而正文图 7 在 512K 是 6.39×（显存）、图 10 在 512K 是 9.56×（吞吐）。两组数字疑似互换或标注错位，引用时应以正文图为准。
+- **长上下文评估的口径**：多针检索只在 128K 下做（因为多数对照模型按此长度调优），而 1M 只做了单针与 NLL。1M 的"N 针"能力没有直接证据。
+- **未来方向（论文明确给出的三条，其中第一条直接指向硬件）**：
+  1. **YOCO + BitNet + Groq**：Groq 把所有东西放进 SRAM 获得极高吞吐，但内存容量瓶颈限制了模型规模与输入 token 数，需要几百颗芯片才能承载一个模型。**YOCO 压缩 KV 缓存、BitNet 压缩权重，两者组合有望把 LLM 部署成本降低数个数量级。**
+  2. **YOCO 用于多模态 LLM**：布局天然支持多个 self-decoder，cross-attention 层适合多模态融合；self-decoder 的因果依赖适合流式视频；异步多模态可以避免不同数据流互相阻塞（对机器人等实时应用关键）。
+  3. **KV 缓存模块的专门机制**：图 2 把 KV 缓存显式画出来，为原生内存机制留出空间——可以集成缓存压缩机制；可以为键值检索建索引（**因为缓存被复用，只需维护一份索引而不是每层一份**）；解耦建模支持预先缓存上下文，对原生 RAG 与 LLM 原生搜索引擎有用。
 
 ## 个人点评
 
-- **亮点**：
-  1. 思路极其干净——不是"减 attention"，而是"消 cache 冗余"。把一条被当作常识的成本（每层都要存 KV）直接砍掉，且**保持输出等价**，因此能与现有 kernel、GQA、量化正交叠加，工程迁移成本低。
-  2. "prefill 可 early exit 且不改变输出"是个被低估的红利：它同时改善延迟与调度（可先算完廉价半层就释放计算资源），而且这个性质来自计算依赖图本身，不需要额外训练技巧。
-  3. 论证链条完整：小规模 scaling law（160M–13B）→ 3B 真实训练（1.6T token）→ 1M 长度扩展 → 多维度 profiling，覆盖了从"能不能训"到"值不值得部署"的完整问题。
-  4. 用 Zoology 的 AR-Hit / First-Occur 拆解对比 Mamba / RetNet / H3，比只报一个平均 PPL 有说服力得多，也直接回应了"高效注意力丢不丢检索能力"这个核心质疑。
-  5. Appendix A 的 chunk parallelism 说明作者确实考虑了长序列训练的通信瓶颈，而不是只做单卡 profiling。
-- **不足**：
-  1. **"only cache once" 有营销成分**：self-decoder 的 state 仍是 `O(CL)`，短序列与浅层模型下收益会明显缩水；论文未给 crossover 点分析，读者容易误以为短上下文也自动受益（Fig 9 显示 32K 只有 2.87×，其实主要来自 early-exit 的 2× 而非 cache 节省）。
-  2. **FLOPs 不降反升的风险未讨论**：cross-decoder 半层对同一份 1M 长 KV 反复做全局 attention，计算量并没有减少；论文没有给出 FLOPs/能耗口径的对比，也没有给出"显存受限 vs 算力受限"的适用边界。
-  3. **精度优势的可解释性偏弱**：YOCO_gRet 优于 Transformer，作者归因于"attention 与 retention 归纳偏置互补"，但同时也承认 1:3 交织 attention/retention 有类似效果——这意味着部分增益可能来自混合架构本身，而非 decoder-decoder 结构。缺少"纯 SWA 版 YOCO vs 纯 SWA Transformer"的干净对照来分离两个因素（Table 8 中 YOCO_SWA 3.553 vs Transformer 3.564 的差距确实很小，这一点部分支持了我的怀疑）。
-  4. **缺少与 KV 压缩方法的组合实验**，而这类方法在工程落地中往往先行。
-  5. **3B / 1.6T token 的规模**与当前主流（数十 B、数十 T token）有差距，61.9%–64.5% 的零样本平均分处在同一档位内，精度结论的说服力有限——**本文真正的贡献在效率侧而非精度侧**。
-- **启发**：对硬件设计者而言，本文最有价值的不是"又一个高效注意力变体"，而是**把 KV cache 从"每层分散"变成"单点集中"**——这直接改变了 memory hierarchy 的设计约束。集中式 cache 意味着可以做单份压缩硬件、单份 K-V 检索索引、单份 KM（key-match）加速器，而不需要每层复制一套控制逻辑。这是一条很适合往芯片方向推进的线索。
+- **这篇工作的核心洞察很简洁：KV 缓存的冗余不在"缓存"这件事本身，而在"每层都缓存一份"**。Transformer 存 $N \times L$ 份 KV，YOCO 只存一份（加上 self-decoder 的常数窗口缓存），因此直接省 $L$ 倍显存。这个视角比"用什么高效注意力压 KV"更彻底——sliding window、retention 之类的方案是在压单层的缓存长度，而 YOCO 是在压层数这个维度。用 cross-attention 让后半个模型读同一份 KV，代价是后半个模型的注意力表达力被限制在同一组 $\hat K, \hat V$ 上，论文用实验证明这个代价在 3B 与 13B 规模下可以接受。
+- **Prefill 的复杂度降低是附带但很有价值的结果**。因为 KV 只来自 self-decoder，prefill 的注意力从 $O(LN^2D)$ 变成 $O(LND)$，1M 上下文下 prefill 从约 300 秒降到约 4 秒（71.8×）、512K 从 180 秒降到 6 秒以内。同时吞吐在 512K 从 4.5 提升到 43.1 token/s。这些数字是在 H100 上实测的，且对照的 Transformer 已用了 Flash-Decoding 与 kernel fusion，因此量级可信。
+- **最值得记下的是结论里那条硬件建议**。作者把 YOCO 与 BitNet（权重压缩）和 Groq（全 SRAM 架构）放在一起：Groq 的瓶颈是内存容量不足以承载大模型与大输入，需要几百颗芯片供一个模型；**YOCO 压 KV、BitNet 压权重，组合起来有望把部署成本降低数个数量级**。这条把算法侧的两种压缩与我们仓库里另一篇 Groq TSP 论文的容量短板直接对上了——Groq TSP 每芯片只有 220 MiB SRAM，全局内存是物理分布的片上 SRAM，容量正是它的约束。这是一处少见的"算法论文主动指向具体硬件架构"的表述。
+- **需要打折扣的地方有三处**。第一，缩放实验只用了 10B token，与动辄万亿 token 的实践差距很大，"scaling law 拟合良好"这个论断的证据强度不高。第二，Table 3 中 1.6T 行的对照数据有 5 项缺失，1T 行的优势（0.634 vs 0.619/0.612）幅度小且在 BoolQ/Hellaswag/PIQA 三项上落后。第三，图 1 与正文图的数字对不上（图 1 标 *@512k* 却给出 9.6× 显存，而图 7 在 512K 是 6.39×），这类标注错误虽不影响主结论，但说明图表没做交叉核对。
+- **一个工程上值得注意的细节**：GQA 与 cross-attention 兼容，且因为缓存只有一份，**全模型共用一个检索索引**（未来方向第三条）。这意味着如果要做 KV 的检索、压缩或异位存储（比如本仓库 HBF 那篇讨论的 KV offload 池），YOCO 结构让这些机制只需实现一次而不是每层实现一次——这是架构层面少见的"压缩即简化"效应。
 
 ## 工程化三问总结
 
 ### 1. 它解决了什么瓶颈？
 
-- **应用场景与核心瓶颈**：长上下文 LLM serving（长文档问答、仓库级代码、1M 检索）。瓶颈是 KV cache 的显存占用（decoder-only 为 `O(LND)`）与 prefill 的 `O(LN²D)` 时间。论文给出的具体锚点：65B 模型 512K token 需约 86GB KV（超过 H100-80GB 容量），7B 模型在 4×H100 上 prefill 1M 需约 380s。
-- **现有方法为何不足**：encoder-decoder 需要重编码且生成阶段闲置 encoder 参数；纯高效注意力（Mamba / RetNet / SWA / Sparse Transformer）牺牲全局检索能力（Table 8 的 AR-Hit 明显更差，Mamba 1.555 / RetNet 1.466 vs Transformer 1.219）；KV 量化与驱逐是近似压缩，且仍需逐层维护 cache 结构。
-- **论文用什么证据证明问题得到缓解**：显存 9.38×（1M，3B 模型，仅占 12.4GB）、KV 每 token 最高 **80×**（65B，Fig 8）、prefill 71.82×（1M）、吞吐 9.56×（512K）；同时精度在 1T / 1.6T token 下与 StableLM / OpenLLaMA 持平或更好（Avg 0.634 / 0.636 vs 0.619 / 0.612），1M 长度 needle 检索近满分（Fig 5），multi-needle 用 3B 逼近 7B 的 LWM（Table 4）。以上均为**论文证据**；跨平台/跨芯片的收益属**推断**。
-- **限定条件**：32K 时显存只省约 2×、prefill 加速 2.87×（其中约 2× 来自 early-exit 的结构性收益，而非 cache 节省），说明短上下文下收益明显缩小，这是论文证据本身给出的边界。
+- **应用场景与核心瓶颈**：长上下文 LLM 的推理部署。两个瓶颈都被量化：**KV 缓存显存**（Transformer 为 $O(LND)$，随长度与层数同时增长，成为推理容量瓶颈；512K 上下文的 prefill 需要约 180 s，1M 约 300 s）与 **prefill 计算**（自注意力 $O(LN^2D)$）。实测锚点：1M 上下文时 Transformer 的推理显存是 YOCO 的 9.4×；65B 模型下 1 GB 显存 YOCO 能服务 128K token，带 GQA 的 Transformer 只能服务 1.6K token（约 80×）。
+- **现有方法为何不足**：encoder-only 与 encoder-decoder 在自回归生成上都要重复编码或无法复用编码器参数；decoder-only 靠缓存 KV 解决了重编码问题，但缓存量随层数线性增长。
+- **论文证据的分层**：
+  - **可核算的复杂度**：Table 1（KV 内存 $O(LND)$ → $O((N+L)D)$）与 Table 2（prefill $O(LN^2D)$ → $O(LND)$）是结构性的，不依赖测量。
+  - **H100-80GB 实测**：显存突破（图 7，1M 时 12.4 GB vs 9.4×）、per-token KV 显存（图 8，65B 时 80×）、prefill 延迟（图 9，32K 2.87× 到 1M 71.82×）、吞吐（图 10，512K 时 4.5 → 43.1 token/s，9.6×）。这些是在明确硬件与明确对照配置下测得的。
+  - **需要打折的**：图 1 的 "@512k" 数字（9.6×/6.4×/30.3×）与正文图 7/10 在 512K 下的 6.39×/9.56× 不一致；3B 模型的下游对比在 1.6T 行有 5 项对照缺失；160M–13B 的缩放曲线只有 10B token 预算；多针检索只在 128K 上评估。
 
 ### 2. 用了什么结构或训练方法？
 
-- **整体结构与数据流**：`X⁰ →(L/2 层 self-decoder，高效自注意力)→ X^{L/2} →(线性投影一次)→ K̂,V̂ →(L/2 层 cross-decoder，共享 K̂,V̂)→ X^L → softmax`。推理时 prefill 阶段跳过全部 cross-decoder（Figure 3 中的 "Cross-Decoder (Skipped)"），generation 阶段逐 token 补算；训练时用 chunk parallelism，KV 只 all-gather 一次（Figure 11）。
-- **关键模块/结构**：gated retention（三种等价表示：parallel / recurrent / chunkwise recurrent，Appendix B 有完整等价性证明；门控为 head-wise 以便走 tensor core）、滑动窗口 attention（C=1024）、GroupNorm 逐头归一化的多头融合 + swish gate、pre-RMSNorm + SwiGLU、与 GQA 兼容的 cross-attention、Triton 实现的 gRet kernel（基于 FLA）。
-- **训练目标、损失函数或优化方法**：标准 **next-token prediction 的 softmax 交叉熵**——架构改动不引入任何新损失项，这是该工作工程可迁移性强的重要原因。优化器 AdamW β=(0.9, 0.95)（3B）/ (0.9, 0.98)（scaling），lr 3.2e-4，warmup 1000（3B）/ 375（scaling）步，线性衰减，weight decay 0.1 / 0.05。
-- **数据与训练策略**：与 StableLM-3B-4E1T 同源的 curated corpus，tokenizer 为 tiktoken-cl100k_base；3B 用 batch 4M token、序列 4096、5T-token schedule 实跑 1.6T；scaling 曲线用 batch 0.25M token、序列 2048、10B token；长上下文扩展按 64K → 256K → 1M 递进，逐级降 lr（8e-5 / 4e-5 / 2e-5）并调大 RoPE θ（640K / 5M / 80M），训练数据**按序列长度上采样**，且为公平对比**不使用长指令微调数据**。
+- **整体结构**：$L$ 层拆成前 $L/2$ 层 self-decoder + 后 $L/2$ 层 cross-decoder。self-decoder 用高效自注意力（gated retention 或 sliding-window attention），其推理内存为 $O(1)$；cross-decoder 用 GQA 兼容的 cross-attention 去读由 $X^{L/2}$ 生成的**唯一一份**全局 $\hat K, \hat V$。块内布局沿用 Transformer（pre-RMSNorm、SwiGLU、GQA）。
+- **关键机制**：
+  1. **KV 只生成一次**：$\hat K = \text{LN}(X^{L/2})W_K$、$\hat V = \text{LN}(X^{L/2})W_V$，被全部 $L/2$ 个 cross-decoder 层复用。
+  2. **Prefill 提前退出**：KV 缓存由 self-decoder 决定，因此 prefill 可跳过 cross-decoder。
+  3. **Gated retention 的 chunk-recurrent 表示**（prefill）与 recurrent 表示（生成），chunk size 256，Triton kernel 实现。
+- **训练与数据策略**：3B 模型跟随 StableLM-3B-4E1T 配方（26 层、hidden 3072、head dim 128、GQA 24/8、AdamW、lr 3.2e-4 线性衰减到 1.28e-5、400k 步 ≈ 1.6T token、序列长度 4096、batch 4M token）。缩放实验 160M–13B、10B token、2k 序列、0.25M batch。长上下文按 64K → 256K → 1M 逐级扩展，数据按长度上采样，不使用长指令微调数据。论文另提出用于 1M 训练的 chunk parallelism 算法以降低通信开销与显存碎片。
 
-### 3. 对芯片架构、RTL、验证有什么启发？
+### 3. 对芯片架构和 RTL 有什么启发？
 
-- **芯片架构**：
-  - **KV cache 集中化改变 memory hierarchy 假设**：全局 KV 只有一份，且物理位置固定在 self-decoder 与 cross-decoder 的交界。这适合做成**单一集中式 on-chip SRAM 或近存 cache**，而不是每层私有的 KV 切片。对片上存储规划的影响是实质性的：总容量需求从 `O(L·N)` 降到 `O(N)`，地址生成与控制逻辑也从 L 套降为 1 套。
-  - **访问模式变化**：cross-decoder 的半层层**对同一份 KV 反复读取**，是典型的**广播/多播型带宽受限**负载，可用共享总线或多播互连替代点对点读，降低互连压力。同时 self-decoder 的 K/V 是写入侧、Q 是本地生成，写少读多的不对称性有利于简化仲裁。
-  - **算子选型**：gated retention 的递推 `S ← γS + K^⊤V` 是**固定尺寸状态 + 逐元素标量缩放**，与脉动阵列 / 权重驻留数据流的契合度高于 softmax attention（无 softmax、无动态序列长度的归约）。但 `γ` 是数据相关的 head 级标量，需要一条低精度指数/累乘通路（论文用 `logsigmoid + cumsum`）。
-  - **算力换取显存**：论文明确承认 FLOPs 未减少，因此**算力受限芯片（而非显存/带宽受限芯片）不会自动受益**。这是选型时最关键的一条边界。
-  - **可扩展性**：KV 只 all-gather 一次意味着跨 die / 跨 GPU 的通信模式从"每层一次"变成"一次"，对 chiplet 或 scale-up 互连的带宽预算有直接好处。
-  - `TBD / 推测`：论文没有任何面积、功耗、SRAM 容量建议，也没有给出集中式 KV 的命中率或 bank 冲突模型。上述收益取决于 kernel 侧容量与访问模型，属**工程推断**而非论文结论。
-- **RTL**：
-  - **可直接映射的模块**：`Project`（一次 K/V 投影，可参数化 head 数与非对称 GQA 分组比 24:8）、`RecurrentRetention`（`S` 寄存器阵列 + `γ` 缩放 + 外积累加，是天然的状态机/累加器结构）、`ChunkwiseRetention`（块内并行单元 + 跨块 `R` 递推 + 块间串行）、`GroupNorm`（逐 head 归一化，需要 per-head 统计与倒数）、`SwiGLU` / `RMSNorm` 标准件。
-  - **双模式接口**：必须区分 **prefill（chunkwise，块内并行、高吞吐）** 与 **generation（recurrent，batch=1、低延迟）** 两条路径，是典型的多模式 FSM + 模式选择寄存器设计。此外 prefill 需要一条"跳过 cross-decoder"的控制路径（Figure 3 的 Skipped 状态），这是 YOCO 特有的控制复杂度——本质上是把"层数减半"做成可运行时切换的行为。
-  - **数值与时序风险**：`γ` 的累乘（`β`、`D`、`R` 的递推）在长 chunk 上极易下溢，定点化需要**对数域递推或分段重缩放**；论文的 `log/exp` 路径对精度敏感，是定点化的重点与风险点。窗口 `C`、chunk 大小 `B`（论文取 256）、head dim（gRet 取 256）都是可参数化设计旋钮。
-  - `TBD`：论文未涉及 RTL、流水线级数、时钟频率与面积评估，以上为**基于算法结构的映射推断**。
-- **验证**：
-  - **三种表示的数值等价性**是最核心的功能性质：`parallel ↔ recurrent ↔ chunkwise` 必须给出相同（或容差内一致）的结果。应建立 golden model（PyTorch parallel 实现作参考）做逐 token 比对。这正是 Appendix B 证明的内容，也是实现中最易出错处。
-  - **KV cache 一致性**：cross-decoder 所有层共享同一份 `K̂, V̂`，需验证"全局 cache 只写一次、读 L/2 次"的一致性；并覆盖 **prefill early-exit 路径与完整 prefill 路径输出完全相同**这一核心声明（论文的关键卖点，也是回归测试的第一优先级）。
-  - **边界条件**：`N=1`、`N < chunk size`、`N` 非 chunk 整数倍、窗口边界（`i−C < j ≤ i`）、mask 的 `j ≤ k` 与 `j < m` 分支、`γ → 1` 的温度极端值、超长序列（1M）下 cache 地址空间与计数器溢位、GQA 分组非整除情形。
-  - **随机约束与参考模型**：以 parallel 实现为参考模型，对 recurrent / chunkwise 硬件通路做 constrained-random 对比；对 GQA 分组数、head 数、GroupNorm 统计做参数化覆盖。
-  - **性能指标与软硬件一致性**：除延迟/吞吐外，应单独验证 **KV 显存占用随 N 的斜率是否真的接近 `O(N)` 而非 `O(NL)`**；用 32K 与 1M 两个点即可暴露"是否只在单边长上下文才有效"的回归行为（对应 Fig 7a 的 1.95× → 9.38× 曲线）。
-  - `TBD`：论文没有验证方法学章节，以上验证计划为**基于方法结构的工程推断**。
+- **芯片架构**：四条。第一，**KV 缓存的压缩是算法层面对显存的直接释放，会改变加速器的容量-带宽权衡点**。65B 模型下每 GB 显存的服务 token 数提升约 80×，这意味着在同一片 HBM 容量下可以支撑的上下文长度或 batch 数大幅增加；反过来，如果加速器的容量本来就紧张（如全 SRAM 架构），这一压缩直接决定模型能否装下。第二，**论文自己给出的组合路线值得作为设计输入**：YOCO（压 KV）+ BitNet（压权重）+ Groq（全 SRAM、极高吞吐但容量受限）。Groq TSP 每芯片只有 220 MiB SRAM、全局内存是物理分布的片上 SRAM，容量是硬约束；YOCO 与权重压缩同时减小"必须放下的字节"，这是把两类压缩算法与具体内存架构（SRAM-only vs HBM vs HBF/NAND 分级）配对的一个具体案例。第三，**prefill 与 decode 的瓶颈在新结构下分离得更清楚**：prefill 从 $O(LN^2D)$ 降到 $O(LND)$ 且可跳过一半层，而 decode 阶段每步只需读一份 KV——这对加速器的双阶段调度（prefill 用大算力、decode 用大带宽）是有利的，但它同时意味着**加速器如果按"每层一份 KV"来规划片上 buffer，会出现严重过配**（推测）。第四，**跨层共享 KV 使"一份数据被多个消费者读"成为常态**：$L/2$ 个 cross-decoder 层读同一份 $\hat K, \hat V$，在片上 SRAM 组织上这是一个天然的多播/共享缓冲场景，而不是每层私有的 buffer（此为工程推断，论文未涉及硬件实现）。
+- **RTL**：论文是纯算法/建模工作，**没有任何硬件或 RTL 数据**。可推断的实现含义包括：cross-attention 的 K/V 读取路径需要支持 $L/2$ 个消费者共享同一 buffer（多播或分级共享）；self-decoder 的高效注意力（sliding window 或 gated retention）需要常数大小的环形缓冲与 chunk 级的部分和累加（chunk size 256 是一个可用的参考值）；prefill 阶段"跳过 cross-decoder"需要一组可旁路的数据通路与节拍控制；以及论文提到的 chunk parallelism（用于 1M 训练，涉及跨设备的 chunk 划分与通信）。上述均为工程推断，论文未给出任何循环次数、面积、功耗或时序数据。若要在 RTL 中落地，需要补的量值包括：共享 KV buffer 的带宽需求与端口数、多播网络结构、chunk-recurrent 累加器的位宽与精度、以及旁路路径对时序的影响，均 `TBD`。
+- **推断边界**：第 1 问的复杂度结论来自 Table 1/2（结构性论证），性能数字来自 H100 实测（但有图 1 与正文图不一致、对照配置不完全对等两点需注意）；第 2 问的结构与机制为论文直接内容。第 3 问的芯片架构与 RTL 内容为工程推断，其中"YOCO + BitNet + Groq"是论文自身的表述，其余为实现含义的推断。模型在更大规模（>13B）与更大训练预算下的表现、1M 上下文的多针检索能力、以及共享 KV 在真实加速器上的带宽开销，均 `TBD`。
