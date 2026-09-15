@@ -3,145 +3,117 @@
 ## 基本信息
 
 - **标题**：ACE-RTL: When Agentic Context Evolution Meets RTL-Specialized LLMs
-- **文档类型**：论文预印本
+- **文档类型**：论文（预印本）
 - **作者**：Chenhui Deng、Zhongzhi Yu、Guan-Ting Liu、Nathaniel Pinckney、Haoxing Ren
-- **机构**：NVIDIA（Haoxing Ren 的工作完成于 NVIDIA，论文脚注注明其现就职于 Agentrys）
-- **发表 venue**：arXiv 预印本，cs.AR，v1；尚未见同行评审 venue 信息
+- **机构**：NVIDIA（脚注说明工作完成于 NVIDIA 任职期间，Haoxing Ren 现属 Agentrys）
+- **发表 venue**：arXiv preprint（arXiv:2602.10218v1 [cs.AR]，2026-02-10）
 - **年份**：2026
-- **原始来源**：[arXiv:2602.10218v1](https://arxiv.org/abs/2602.10218)
-- **阅读范围**：全文 7 页，逐页核对正文、Figure 1-6、Table 1-2、坐标轴、图例、样本量与脚注
+- **链接**：https://arxiv.org/abs/2602.10218
 
 ## 一句话总结
 
-> ACE-RTL 用 170 万条样本微调的 RTL 专用生成模型负责写代码，以 Claude4-Sonnet 分析仿真失败，再由协调器积累调试上下文和触发重启；在 CVDP 四类任务上取得 80.85%-96.15% 的 Agentic Pass Rate，但证据止于 Icarus Verilog 功能仿真，未覆盖综合、PPA、形式验证或硅后结果。
+> 把 RTL 专用模型（Generator）和通用前沿 LLM（Reflector + Coordinator）接成一个自演化上下文的迭代环，ACE-RTL 在 CVDP 上把 APR 从最强基线 51.28% 提到 96.15%，并用 5 路并行把平均迭代次数从 11.33 降到 3.95。
 
 ## 研究动机与问题定义
 
-- **要解决的核心问题**：将自然语言规格稳定转换为功能正确的 RTL，尤其面向代码补全、Spec-to-RTL、代码修改和代码调试等比传统小型基准更长、更复杂的任务。
-- **现有方法的不足**：RTL 专用模型有领域语义和惯用硬件结构知识，但长上下文推理、多步规划和指令遵循能力有限；基于前沿通用 LLM 的 Agent 系统推理较强，却缺少从大规模 RTL 数据中学习的硬件语义。
-- **本文的切入角度**：不让单一模型同时承担所有职责，而是通过智能体上下文演化（Agentic Context Evolution, ACE）把 RTL 专用 Generator、通用 LLM Reflector 和维护历史/控制重启的 Coordinator 串成仿真闭环。
-- **评测问题**：作者认为 VerilogEval 和 RTLLM 已偏简单，因此主要使用 Comprehensive Verilog Design Problems（CVDP）v1.0.2；其输入规格和目标代码据称比 VerilogEval 长数个数量级，并覆盖多个 RTL 任务与硬件领域（第 2 页，第 2.3 节）。
+- **要解决的核心问题**：让 LLM 生成功能正确的 RTL，尤其是长规格、多任务（补全、规格到 RTL、修改、调试）的真实设计问题。
+- **现有方法的不足**：论文把已有工作分成两条互不交叉的路线，并指出二者缺陷互补。第一条是训练 RTL 专用模型（RTLCoder、CraftRTL、ScaleRTL），这类模型吸收了硬件语义，但长上下文推理、多步规划和指令跟随能力弱（第 1 页）。第二条是通用 LLM 加仿真反馈的 agentic 系统（VerilogCoder、MAGE），推理强但缺少从大规模硬件数据中学到的领域知识，遇到需要深层硬件语义的问题会失败（第 1 页）。
+- **本文的切入角度**：认为 agentic 系统的核心作用不是复杂工具编排，而是「动态构造正确的上下文」，于是用上下文演化把两条路线合成一个环（第 2 页）。
 
 ## 核心方法
 
 ### 方法概述
 
-ACE-RTL 的数据流是：规格进入 RTL 专用 Generator，生成 RTL 后由 Icarus Verilog（iverilog）编译与仿真；若全部测试通过则输出代码，否则脚本把错误日志整理为错误信息、期望/实际信号和相关信号等结构化反馈，再交给 Claude4-Sonnet Reflector 分析根因并给出高层修复建议。Coordinator 将本轮错误、建议、修复和结果增量写入自演化上下文，指导下一轮 Generator（第 3 页，Figure 2(a)）。
+ACE-RTL 由三个组件构成，串成一个迭代环（Figure 2a，第 3 页）。Generator 是训练过的 RTL 专用模型，按规格和当前自演化上下文生成 RTL；仿真用 Icarus Verilog（iverilog）执行，失败时触发 Reflector，由 Claude4-Sonnet 把仿真日志翻译成结构化的根因与修复指引；Coordinator 把这一轮的错误、指引和执行结果整理进增量更新的上下文，喂回 Generator。环一直转到仿真通过或达到迭代上限。
 
-当连续多轮出现相同错误、进展停滞时，Coordinator 放弃当前实现，保留提炼出的高层设计约束并要求 Generator 从规格重新生成。系统还并行启动 5 条独立轨迹，每条最多 30 轮；任一轨迹通过测试后立即终止其余轨迹（第 3-4 页，Figure 2(b)）。这利用采样随机性换取更短的收敛路径，但也引入额外并行算力和 API 调用。
+在此之上引入 parallel scaling（Figure 2b，第 3 页）：同时启动多条独立轨迹，每条从同一规格出发但初始 RTL 实现不同，任意一条通过全部测试就立刻终止其余进程。
 
 ### 关键技术细节
 
-- **Generator 数据构建**：从公开仓库和开源硬件项目收集约 500 万份 RTL，去重并排除网表、HLS 生成代码、少于 30 行或多于 2000 行的异常样本，再用 iverilog 过滤语法错误。作者以 Jaccard 相似度检查下游基准 golden solution，相似度大于 0.8 的样本被剔除，最终保留 15.7 万份 RTL（第 3 页，第 3.1 节）。
-- **规格-代码对生成**：人工准备 32 个覆盖生成、修改和调试的示例，从中随机取一个作为上下文，调用 GPT-OSS-120B、DeepSeek-R1 及未逐一列明的闭源模型生成多样规格-RTL 对；再次过滤语法错误和疑似基准污染后形成 170 万样本（第 3 页）。
-- **Generator 训练**：基于 Qwen2.5-Coder-32B-Instruct 做监督微调（Supervised Fine-Tuning, SFT），使用 32 个计算节点、每节点 8 张 NVIDIA A100，共 256 张 A100；训练 3 个 epoch，上下文长度 32,768，全局 batch size 128，使用余弦退火学习率调度（第 4 页，第 4.1 节）。
-- **Reflector**：Claude4-Sonnet 同时读取规格、错误 RTL 和结构化仿真反馈，输出主要错误、根因分析和高层修复指导。论文强调闭环只依赖开源 iverilog，而非复杂专有 EDA 工具（第 3 页，第 3.2 节）。
-- **Coordinator**：聚合历次错误、建议、修复动作及结果，避免重复或破坏已修复逻辑；当相同错误持续出现时触发 restart，探索新的实现轨迹（第 3-4 页，第 3.3 节）。
-- **并行扩展**：推理温度设为 1.2，启动 5 个独立 ACE-RTL 进程，每进程最多 30 次迭代；Generator 通过 vLLM 部署，其余组件使用 Claude4-Sonnet 官方 API（第 4 页）。
+- **数据集构造**：从公开仓库和开源硬件项目收集 500 万份原始 RTL 脚本，过滤重复文件、机器生成代码（netlist、HLS 产物）、行数少于 30 或多于 2000 的极端样本，再用 iverilog 做语法校验；用 Jaccard 相似度（阈值 0.8）剔除与下游 benchmark golden solution 重叠的样本。最终保留 157K 高质量 RTL 脚本，再用 in-context learning 生成 170 万条规格–代码对（第 3 页）。
+- **Generator**：以 Qwen2.5-Coder-32B-Instruct 为基座做 SFT。32 个计算节点、每节点 8 张 A100（共 256 张），采用 tensor/pipeline/context 并行；训练 3 个 epoch，上下文窗口 32,768 tokens，global batch size 128，cosine-annealing 学习率调度（第 4 页）。
+- **Reflector**：推理引擎为 Claude4-Sonnet。自动脚本把仿真原始日志转成结构化格式（错误信息、期望与实际信号行为），Reflector 结合规格和错误 RTL 输出诊断报告，包含根因解释和高层修复指引（第 3–4 页）。
+- **Coordinator**：维护跨迭代的调试历史（哪些错误被识别、提了什么修复、是否解决问题），避免回退到已修正的逻辑；当同一错误连续多轮不消失时触发 restart，丢弃当前实现，让 Generator 从规格重新生成（第 4 页）。
+- **parallel scaling**：推理时 5 条并行进程，每条最多 30 次迭代，Generator temperature 设为 1.2；Generator 用 vLLM 托管，其余组件走 Claude4-Sonnet 官方 API（第 4 页）。
+- **评价指标**：同时报 Pass@1 和 Agentic Pass Rate（APR，唯一解出问题数 / 总问题数）。论文认为 agentic 方法本身就会多轮迭代，只用 Pass@1 与独立 LLM 对比会失真，因此补 APR（第 4 页）。
 
 ### 核心创新点
 
-1. 将大规模 RTL 数据微调出的领域模型与前沿通用推理模型放进同一仿真反馈闭环，而不是只扩展训练或只扩展 Agent 工具链。
-2. 把 Agent 的主要职责定义为演化“正确上下文”：结构化保存尝试历史、提炼修复知识并在停滞时重启。
-3. 通过多条随机轨迹并行、首个成功即停止的策略，降低找到可通过测试实现所需的平均迭代数。
-4. 在 CVDP 的多种复杂 RTL 任务上同时比较通用模型、RTL 专用模型与 Agent 方法，并引入 Agentic Pass Rate（APR）描述多轮求解覆盖率。
+1. 提出 Agentic Context Evolution 框架，把 RTL 专用模型放进 agentic 环内，而不是二选一。
+2. 构建 170 万条规格–代码对的 RTL 数据集，产物 ACE-RTL-Generator 单独评测即超过 GPT-5 与 ScaleRTL。
+3. parallel scaling 用多条独立轨迹替代单条长轨迹，把收敛迭代数压低到约四分之一。
+4. 改用 CVDP 作为主评测集，理由是 VerilogEval、RTLLM 已饱和，CVDP 的问题描述和目标代码比 VerilogEval 长数个量级。
 
 ### 与现有方法的关键区别
 
-- **相对 RTLCoder、CraftRTL、OriGen、ScaleRTL**：这些方法主要增强训练数据、领域微调或 test-time reasoning；ACE-RTL 进一步引入独立 Reflector 和有状态 Coordinator。
-- **相对 VerilogCoder、MAGE**：既有 Agent 方法依赖通用 LLM、任务图、波形追踪或多工具协作；ACE-RTL 以 RTL 专用模型作为生成核心，并把重点放在上下文增量演化与重启。
-- **相对单独 Claude4-Sonnet**：同一个 ACE 框架换用 RTL 专用 Generator 后，除 cid002 持平外，在 cid003/cid004/cid016 的 APR 分别高 6.41/9.09/2.86 个百分点（第 5 页，Table 1）。
+与 VerilogCoder、MAGE 的区别在于不做细粒度子任务分解和工具编排，而是让上下文随迭代演化，用领域模型承担生成、通用模型承担诊断。与 ScaleRTL† 的区别在于不依赖单模型 test-time scaling，而是把专用模型的生成能力与外部反馈闭环结合。Table 1 中 ACE-RTL 与 ACE-RTL (Claude4) 的差距说明：同一 agentic 框架下，把 Generator 换成 RTL 专用模型本身带来主要收益（第 5 页）。
 
 ## 实验与结果
 
 ### 实验设置
 
-- **主数据集**：CVDP-v1.0.2 的 4 个类别：代码补全 cid002（94 题）、Spec-to-RTL cid003（78 题）、代码修改 cid004（55 题）、代码调试 cid016（35 题），合计 262 题；每题运行 5 次（第 4 页，第 4.1 节）。
-- **补充数据集**：VerilogEval-Human-v2（第 6 页，Table 2）。
-- **基线方法**：5 个开源通用模型、3 个闭源通用模型、RTLCoder、CodeV、OriGen、CraftRTL、ScaleRTL，以及带 test-time scaling 的 ScaleRTL†；Table 1 实际列出 14 个非本文模型。
-- **评估指标**：独立模型报告 Pass@1 与 APR；APR 定义为至少一次解出的不同题目数占总题数的比例。Agent 方法只报告 APR，论文表注称其 Pass@1 等于 APR（第 4-5 页，Table 1）。
-- **判定标准**：测试用例下的功能仿真通过；没有综合、时序、面积、功耗、形式等价或硅后指标。
+- **数据集**：CVDP-v1.0.2 四个任务——code completion（cid002，94 题）、spec-to-RTL（cid003，78 题）、code modification（cid004，55 题）、code debugging（cid016，35 题），每题独立跑 5 次；另在 VerilogEval-Human-v2 上补充评测。
+- **基线方法**：13 个基线（摘要写 14 个 competitive baselines，第 4 页正文写 13 个 SoTA baselines，两处不一致）。开源模型 Llama4-Maverick、DeepSeek-v3.1、DeepSeek-R1、Kimi-K2、Qwen3-Coder-480B；闭源模型 o4-mini、GPT-5、Claude4-Sonnet；RTL 专用模型 RTLCoder-v1.1-7B、CodeV-7B、OriGen-7B、CraftRTL-15B、ScaleRTL-32B、ScaleRTL†-32B。
+- **评估指标**：Pass@1、APR。
 
 ### 主要结果
 
-| 方法 | cid002 APR | cid003 APR | cid004 APR | cid016 APR |
+CVDP 上四个任务的 APR（Table 1，第 5 页）：
+
+| 方法 | cid002 | cid003 | cid004 | cid016 |
 | --- | ---: | ---: | ---: | ---: |
-| GPT-5 | 39.36% | 47.44% | 45.45% | 60.00% |
-| Claude4-Sonnet | 39.36% | 51.28% | 49.09% | 54.29% |
-| ScaleRTL†-32B | 29.79% | 35.90% | 32.73% | 40.00% |
-| ACE-RTL (Claude4) | 80.85% | 89.74% | 81.82% | 88.57% |
-| **ACE-RTL** | **80.85%** | **96.15%** | **90.91%** | **91.43%** |
+| Claude4-Sonnet（最强基线） | 39.36 | 51.28 | 49.09 | 54.29 |
+| GPT-5 | 39.36 | 47.44 | 45.45 | 60.00 |
+| ScaleRTL†-32B | 29.79 | 35.90 | 32.73 | 40.00 |
+| ACE-RTL (Claude4) | 80.85 | 89.74 | 81.82 | 88.57 |
+| **ACE-RTL** | **80.85** | **96.15** | **90.91** | **91.43** |
 
-数据来自第 5 页 Table 1。ACE-RTL 相对各任务最强既有基线的最大提升出现在 cid003：96.15% 对 51.28%，即 **44.87 个百分点**。论文写作“44.87% improvement”，更严谨的解读是绝对百分点差，而不是 44.87% 的相对增幅。
+- 相对最强基线，APR 最大提升 44.87%（摘要；对应 cid003 的 96.15% vs 51.28%）。
+- Generator 单独评测（Pass@1）：39.57 / 49.74 / 65.09 / 56.00。cid004 上 65.09% 比 GPT-5 的 43.64% 高 21.45%（第 4–5 页）。
+- RTL 专用模型整体在 CVDP 上表现差：RTLCoder-v1.1-7B 在 cid004 的 APR 只有 1.82%，CodeV-7B 在 cid004/cid016 为 0。论文归因于这类模型训练数据偏短、偏简单，泛化不到 CVDP 的真实设计场景（第 4 页）。
+- VerilogEval-Human-v2（Table 2，第 6 页）：ACE-RTL APR 95.5，高于 VerilogCoder 94.2、ScaleRTL† 93.6；ACE-RTL-Generator Pass@1 73.8，高于 Claude4-Sonnet 73.0 和 CraftRTL 68.0。作者用它证明模型没有只对 CVDP 过拟合。
 
-独立的 ACE-RTL-Generator 在 cid004 达到 65.09% Pass@1，而 GPT-5 为 43.64%，高 **21.45 个百分点**；这支持大规模任务定向 RTL 数据对代码修改能力的贡献，但不能独立证明 170 万样本规模、数据质量和基座模型各自的因果作用（第 4-5 页，Table 1）。
+### 消融实验要点
 
-在 VerilogEval-Human-v2 上，ACE-RTL-Generator 的 Pass@1 为 73.8%，高于 CraftRTL 的 68.0% 和 Claude4-Sonnet 的 73.0%；Agent 方法中 ACE-RTL 的 APR 为 95.5%，ScaleRTL† 为 93.6%，VerilogCoder 为 94.2%（第 6 页，Table 2）。
+论文没有独立的消融章节，可用证据来自三处：
 
-### 并行扩展结果
-
-| CVDP 类别 | 无并行平均迭代数 | 5 路并行平均迭代数 | 迭代数缩减 |
-| --- | ---: | ---: | ---: |
-| cid002 | 11.33 | 3.95 | 2.87x |
-| cid003 | 11.25 | 4.23 | 2.66x |
-| cid004 | 9.25 | 3.75 | 2.47x |
-| cid016 | 13.36 | 4.37 | 3.06x |
-
-数据来自第 6 页 Figure 6 及第 4.4 节。它证明首个成功轨迹的迭代深度下降，但 5 路并行不等于总计算量或成本下降；论文没有报告 token 数、GPU/API 消耗和端到端墙钟时间，因此“约 3x runtime reduction”应视为基于迭代数的代理结论。
-
-### 消融实验与案例研究要点
-
-- **无标准组件消融**：论文没有给出逐项移除 Reflector、Coordinator、restart、历史压缩或训练数据规模的受控消融表；ACE-RTL 与 ACE-RTL (Claude4) 只隔离了 Generator 类型。
-- **Case Study I - RS232 Transmitter**：Claude4-Sonnet 将累加器和脉冲合并赋值，破坏了依赖最高位溢出的分数分频行为；ACE-RTL-Generator 保留下位累加并使用最高位输出稳定脉冲，说明专用训练数据有助于学习常见 RTL 时序模式（第 5-6 页，Figure 3）。这是单案例证据。
-- **Case Study II - 64b/66b Decoder**：在 10 个测试中快速通过 9 个后长期停滞，Reflector 从期望/实际差异推断规格未明说的对齐变换；更新提取逻辑后通过最后一项（第 5-6 页，Figure 4）。
-- **Case Study III - Clock Jitter Detection**：系统多轮在建立有效基线前过早检测抖动；Coordinator 识别同类断言持续失败并两次 restart，Generator 随后增加 validity flag，在首个完整测量区间后才检测，从而通过 6/6 测试（第 5-6 页，Figure 5）。
+- **Generator 是否专用**：ACE-RTL 对 ACE-RTL (Claude4)，APR 从 80.85/89.74/81.82/88.57 提到 80.85/96.15/90.91/91.43。cid002 两者相同，说明该任务对 Generator 类型不敏感。
+- **parallel scaling**：开启后平均迭代次数从 11.33→3.95（cid002）、11.25→4.23（cid003）、9.25→3.75（cid004）、13.36→4.37（cid016），对应加速 2.87×、2.66×、2.47×、3.06×（第 6 页，Figure 6）。作者称这是「约 3× 的 runtime 缩减」，但只报迭代数，未报 wall-clock 与 API 成本。
+- **Reflector 与 Coordinator 的贡献**：只有两个案例研究（Case Study II 说明 Reflector 能识别规格中未写明的对齐变换要求；Case Study III 说明 Coordinator 在连续 20+ 次无进展后 restart，两次 restart 后引导出 valid flag 方案）。这是定性证据，没有数值消融。
 
 ## 局限性与未来方向
 
-### 作者明确披露或由实验设置直接可见的局限
-
-- CVDP 只使用 4 个类别，作者明确将 testbench generation 和 subjective evaluation 留作未来工作（第 4 页，第 4.1 节）。
-- 论文没有独立“Limitations”章节，也没有报告综合、PPA、时序收敛、CDC/RDC、lint、形式验证或真实项目签核结果；“功能正确”仅指给定测试下通过 iverilog。
-- 训练成本很高：一次 SFT 使用 256 张 A100、3 个 epoch；在线求解还依赖 5 路并行的 32B Generator 与 Claude4-Sonnet API。论文未报告成本、token、能耗或延迟分布。
-- APR 衡量多次尝试后的覆盖率，会把更多采样和更多迭代带来的 test-time compute 计入能力；不同模型的预算、公平性和统计置信区间没有完整展开。
-- 170 万训练对主要由模型合成；论文说明了语法检查和 Jaccard 去污染，但没有充分披露数据许可、语义正确性抽检比例、功能仿真覆盖率或对语义级 benchmark contamination 的检查。
-- 三个案例均为论文挑选的代表性/困难样例，能解释机制但不能替代组件消融与大样本错误分类。
-
-### 潜在改进方向
-
-- 在固定 token、调用次数、GPU 时间和美元成本下比较不同 Agent，并报告成功率-成本-PPA 的 Pareto 前沿。
-- 增加 Generator/Reflector/Coordinator/历史记忆/restart/并行度的逐项消融，以及不同训练数据规模和质量过滤策略的 scaling 曲线。
-- 将验证闭环扩展到 lint、综合、静态时序、形式属性、CDC/RDC、功耗估计与等价性检查，区分“测试通过”和“可签核 RTL”。
-- 在不可见的真实多文件 IP、长周期项目和人工维护任务上评测，并公开失败类别、置信区间与复现实验脚本。
-- 对 Reflector 推断出的“隐含规格”增加人工确认或独立性质检查，避免 Agent 为通过不完整测试而修改设计意图。
+- **作者提到的局限**：CVDP 的 testbench generation 与主观评价两类任务被留给未来工作；没有声明数据集或模型权重是否开源。
+- **未披露但影响判断的内容**：
+  - 成本与延迟完全缺失。每个问题最多 5 进程 × 30 迭代，每次迭代都要跑仿真并调用 Claude4-Sonnet API，论文只报迭代数，没报 token 消耗、API 花费或 wall-clock。
+  - 主结果依赖闭源 Claude4-Sonnet 作为 Reflector/Coordinator，可复现性和长期可用性受外部 API 影响。
+  - 基线数量在摘要（14）和正文（13）不一致。
+  - temperature 1.2、最多 30 次迭代、5 路并行等关键超参没有敏感性分析。
+  - 污染控制只用了 Jaccard > 0.8 的相似度过滤，未报告过滤前后对 CVDP 成绩的影响。
 
 ## 个人点评
 
-- **亮点**：论文最有价值的不是“多 Agent”本身，而是职责拆分清楚：领域模型生成、通用模型解释失败、轻量控制器维护可验证历史。Figure 2 的闭环简单，且只要求 iverilog 就能形成最小可用反馈链。
-- **亮点**：CVDP 比已趋饱和的小模块基准更接近真实 RTL 任务，四类任务和 262 个问题也比只做 Spec-to-RTL 更能暴露模型差异。ACE-RTL-Generator 在代码修改上的 21.45 个百分点优势说明任务定向数据可能比单纯换更大通用模型有效。
-- **不足**：论文把“通过测试”频繁表述为“正确 RTL”，证据强度偏高。测试不完备时，Agent 可能过拟合 testbench；没有综合和形式检查，也无法判断代码是否可实现、可维护或满足 PPA。
-- **不足**：并行 scaling 的收益以迭代数呈现，却没有总计算预算。5 路并行首胜策略很可能用资源换延迟，不能直接解释为整体效率提升。
-- **启发**：对于工程落地，最值得复用的是“结构化失败记录 + 单一主错误 + 重复失败检测 + 有约束重启”，而不是照搬昂贵的 256-A100 训练或固定 5 路并行配置。
+- **亮点**：把「专用模型 vs 通用 agent」这个二选一拆成角色分工，用最小改动（Generator 换专用模型）拿到主要收益，工程上容易复制。用 iverilog 而不是商业工具链，让整个环可移植，这一点对个人和小组复现很关键。指标上引入 APR 也切中 agentic 方法的评价痛点。
+- **不足**：文章最需要的数字——每道题的成本和 wall-clock——一个都没有。parallel scaling 报告的是迭代数下降，但 5 路并行意味着 5 倍的推理与仿真负载，实际计算代价可能上升。这种只报迭代不报算力的做法会让「加速 3×」的结论被高估。此外案例研究只有两个，而 Reflector、Coordinator 的独立贡献完全靠定性叙述支撑。
+- **启发**：ACE 的核心机制（结构化诊断报告 + 增量上下文 + 停滞重启）与具体领域无关，可以原样迁移到其它 EDA 任务，例如时序约束生成、功耗优化脚本、验证用例生成。真正可复用的资产是「把工具日志转成结构化差异报告」这一步，而不是模型本身。
 
 ## 工程化三问总结
 
 ### 1. 它解决了什么瓶颈？
 
-- **应用场景与核心瓶颈**：复杂 RTL 的自然语言生成、补全、修改和调试；单次生成难以同时具备硬件领域知识、长程推理和根据仿真反馈持续修复的能力。
-- **现有方法为何不足**：专用模型懂 RTL 但通用推理较弱，通用 Agent 能分析问题却缺少硬件惯用结构知识；早期基准过短，也掩盖了复杂任务上的能力缺口。
-- **论文证据**：ACE-RTL 在 CVDP 四类任务达到 80.85%-96.15% APR，最高比既有最强基线高 44.87 个百分点；专用 Generator 在 cid004 的 Pass@1 比 GPT-5 高 21.45 个百分点（第 5 页，Table 1）。这是功能仿真证据，不代表可综合性或 PPA。
-- **效率证据**：5 路并行把平均成功迭代深度从 9.25-13.36 降到 3.75-4.37，最高缩减 3.06x（第 6 页，Figure 6）；总资源效率为 `TBD`。
+- **应用场景与核心瓶颈**：RTL 生成的功能正确性。真实设计任务（规格到 RTL、代码修改、调试）的问题描述和目标代码远长于教科书式题目，单次生成难以一次通过仿真。
+- **现有方法为何不足**：RTL 专用模型缺长上下文推理和指令跟随；通用 LLM 的 agentic 系统缺硬件语义，遇到需要深层领域知识的问题会失败（第 1 页）。
+- **论文证据**：CVDP 四个任务的 APR 从基线最好值 39.36/51.28/49.09/60.00 提升到 80.85/96.15/90.91/91.43（Table 1）。这是论文的直接证据。间接证据是 Generator 单独就把 cid004 从 GPT-5 的 43.64% 提到 65.09%。论文没有报成本，因此「缓解」只对通过率成立，对开销不成立。
 
 ### 2. 用了什么结构或训练方法？
 
-- **整体结构与数据流**：Specification -> RTL Generator -> iverilog compile/simulation -> structured failure -> Claude4-Sonnet Reflector -> Coordinator context update/restart -> next generation；通过测试后停止。
-- **关键模块/结构**：Generator 提供 RTL 领域先验；Reflector 将底层日志提升为根因与高层修复建议；Coordinator 保存历史、检测停滞并触发重启；并行调度器运行 5 条独立轨迹并首胜停止。
-- **训练目标、损失函数或优化方法**：基于 Qwen2.5-Coder-32B-Instruct 做 SFT；论文未给出独立任务损失公式，使用 3 个 epoch、32K context、global batch 128 和 cosine-annealing scheduler（第 4 页）。具体峰值学习率等为 `TBD`。
-- **数据与训练策略**：500 万原始 RTL 经规则、语法和相似度过滤后得到 15.7 万高质量脚本，再借助 32 个 seed 示例和多个 LLM 合成 170 万规格-RTL 对；256 张 A100 完成训练（第 3-4 页）。
+- **整体结构与数据流**：规格 → Generator（RTL 专用 LLM）→ iverilog 编译仿真 → 通过则结束；失败 → 日志结构化 → Reflector（Claude4-Sonnet）输出根因与修复指引 → Coordinator 更新自演化上下文 → 回到 Generator。外层是 N 路并行的相同环（论文用 5 路），任一路通过即整体终止（Figure 2）。
+- **关键模块**：Generator（SFT 后的 Qwen2.5-Coder-32B-Instruct）、Reflector、Coordinator（含停滞检测与 restart）。
+- **训练目标与优化方法**：Generator 用监督微调，3 epoch、上下文 32,768、global batch 128、cosine-annealing，2 项目共用 32 节点 × 8 张 A100 做 tensor/pipeline/context 并行。Reflector、Coordinator 不训练，靠 prompt、脚本与 API 推理。
+- **数据与训练策略**：500 万原始 RTL → 157K 过滤后脚本 → 170 万规格–代码对；过滤包含去重、去机器生成、行数裁剪、iverilog 语法校验、Jaccard 0.8 去污染。
 
-### 3. 对芯片架构、RTL、验证有什么启发？
+### 3. 对芯片架构和 RTL 有什么启发？
 
-- **芯片架构**：论文没有提出新芯片微架构，也没有面积、功耗、带宽或硅后数据。工程推断是，若将系统私有化部署，32B Generator、长上下文和多轨迹并行会要求较大显存容量、KV cache 带宽及并发调度；是否值得专用推理加速需结合 token/延迟/成本测量，当前为 `TBD`。
-- **RTL**：可把闭环拆成稳定接口：规格与约束输入、候选 RTL、编译/仿真日志、结构化失败对象、修复建议、版本化上下文和 restart 状态。生成侧应额外约束 reset、位宽/符号、溢出、时序语义、可综合子集和编码规范；论文的 RS232 案例说明分数分频、MSB overflow 等惯用模式值得纳入定向训练和规则检查。
-- **验证**：最直接的启发是让验证反馈成为 Agent 的可解析事实，而不是自由文本。验证计划应覆盖编译、定向测试、随机测试、断言、覆盖率、lint、CDC/RDC、形式属性、综合与等价检查；对每次修复做回归，并防止只修当前失败而破坏既有通过项。Coordinator 的重复错误检测可映射为 failure signature 聚类，restart 则必须保留已证明的性质与约束。
-- **推断边界**：Generator/Reflector/Coordinator 和 CVDP 成绩是论文直接证据；上述芯片部署、RTL 接口和完整验证闭环是基于论文方法的工程推断。论文未证明生成代码达到 tape-out quality，也未证明并行策略降低总算力或成本。
+- **芯片架构**：论文本身不涉及芯片架构。可迁移的推断（非论文证据）是：这类 agentic 环的负载特征是「长上下文生成 + 高频小规模仿真」，瓶颈会落在上下文长度带来的 KV Cache 占用和迭代延迟上。若要在本地加速器上跑，需要把 Generator 的 KV Cache 跨迭代复用（自演化上下文是增量追加的）与仿真加速单元放在同一节点，减少环回延迟。
+- **RTL**：论文不产出 RTL 设计，也没有 RTL 实现层面的结论。对 RTL 流程的启发是接口层面：把 iverilog 日志转成「错误信息 + 期望 vs 实际信号行为」的结构化报告，是整条链能自动闭环的前提（第 3 页）。对 EDA 工具与验证基础设施的启示是，机器可读的差异报告比自然语言日志更直接决定 agent 的效果上限。
+- **推断边界**：本条的三问中，第 1、2 问基于论文正文与表格，属论文证据；第 3 问的芯片架构与 RTL 部分论文完全未涉及，均为工程推断。论文未给出任何综合、面积、功耗或验证覆盖率数据，`TBD`。
